@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (isGameRunning) return;
             board.style.display = 'grid';
             await startGame();
+            renderBoard();
         });
     }
 
@@ -69,8 +70,30 @@ function initializeBoard() {
         board.push(row);    
     }
 
+    let backRowLayout = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
+
+    for(let x = 0; x < 8; x++) {    
+        board[0][x] = new ChessPiece(backRowLayout[x], 'black');
+        board[1][x] = new ChessPiece('pawn', 'black');
+        board[6][x] = new ChessPiece('pawn', 'white');
+        board[7][x] = new ChessPiece(backRowLayout[x], 'white');
+    }
     
     return board;       
 }
 
 let gameState = initializeBoard();
+
+function renderBoard() {
+    for(let y = 0; y < 8; y++) {        
+        for(let x = 0; x < 8; x++) {    
+            document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`).innerHTML = '';
+            const piece = gameState[y][x];
+            if(piece) {
+                const pieceElement = document.createElement('div');
+                pieceElement.className = `piece ${piece.color} ${piece.type}`;
+                document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`).appendChild(pieceElement);
+            }
+        }
+    }
+}
