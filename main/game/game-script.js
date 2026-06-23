@@ -84,16 +84,18 @@ function initializeBoard() {
 
 let gameState = initializeBoard();
 
-function renderBoard() {
+async function renderBoard() {
     for(let y = 0; y < 8; y++) {        
         for(let x = 0; x < 8; x++) {    
-            document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`).innerHTML = '';
+            const square = document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`);
+            square.innerHTML = '';
             const piece = gameState[y][x];
             if(piece) {
                 const pieceElement = document.createElement('div');
-                pieceElement.className = `piece ${piece.color} ${piece.type}`;
-                document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`).appendChild(pieceElement);
-            }
+                pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
+                square.appendChild(pieceElement);
+            }  
+            await sleep(25);
         }
     }
 }
