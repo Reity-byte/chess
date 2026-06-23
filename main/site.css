@@ -1,0 +1,39 @@
+.site-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background-color: #2a6639;
+}
+.site-heading {
+    font-family: 'Arial', sans-serif;
+    font-size: 50px;
+    margin-bottom: 20px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+.site-text {
+    font-family: 'Arial', sans-serif;
+    font-size: 20px;
+    margin-bottom: 30px;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+.button {
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+    border-radius: 2cm;
+}
+.button:hover {
+    background-color: #7bff00;
+    border:#000 solid 1px;
+    transition: background-color 0.3s, border 0.3s;
+}
+
+.site-container {
+    text-align: center;
+    background-color: #699600bb;
+    padding: 40px;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
