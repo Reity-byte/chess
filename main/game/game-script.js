@@ -2,18 +2,32 @@
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 let isGameRunning = false;
+let selectedSquare = null;
+let currentValidMoves = [];
 
 document.addEventListener('DOMContentLoaded', () => {
     const start = document.getElementById('startButton');
     const exit = document.getElementById('exitButton');
     const board = document.getElementById('chessboard');
 
+    if (board) {
+        board.addEventListener('click', (event) => {
+            // Find the square wrapper, regardless of whether they clicked the piece or the empty space
+            const clickedSquareDiv = event.target.closest('.square');
+            
+            // If they clicked the board border (not a square), ignore it
+            if (!clickedSquareDiv) return; 
+
+            // Pass the HTML div directly into your function
+            handleSquareClick(clickedSquareDiv);
+        });
+    }
+
     if (start && board) {
         start.addEventListener('click', async () => {
             if (isGameRunning) return;
             board.style.display = 'grid';
             await startGame();
-            renderBoard();
         });
     }
 
@@ -43,9 +57,16 @@ async function startGame() {
             } else {
                 square.classList.add('black');
             }
-            
-            board.appendChild(square);
 
+            const piece = gameState[y][x];
+            if(piece) {
+                const pieceElement = document.createElement('div');
+                pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
+                square.appendChild(pieceElement);
+            }
+            
+
+            board.appendChild(square);
             await sleep(25);
         }
     }
@@ -58,13 +79,68 @@ async function renderBoard() {
         for(let x = 0; x < 8; x++) {    
             const square = document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`);
             square.innerHTML = '';
+
             const piece = gameState[y][x];
             if(piece) {
                 const pieceElement = document.createElement('div');
                 pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
                 square.appendChild(pieceElement);
             }  
-            await sleep(25);
         }
     }
+}
+
+function handleSquareClick(squareDiv) {
+    const targetX = parseInt(squareDiv.dataset.x);
+    const targetY = parseInt(squareDiv.dataset.y);
+    const targetPiece = gameState[targetY][targetX]; // Fixed the extra spaces here too!
+
+    if(targetPiece && targetPiece.color === currentTurn) {
+        if (selectedSquare) {
+            selectedSquare.classList.remove('selected');
+            clearValidMoveHighlights();
+        }
+        squareDiv.classList.add('selected');    
+        selectedSquare = squareDiv;   
+        
+        // FIX 1: Lowercase 'v' to match engine.js
+        currentValidMoves = getvalidMoves(targetX, targetY); 
+        highlightValidMoves(currentValidMoves);   
+    }
+    else if (selectedSquare) {  
+        const isLegalMove = currentValidMoves.some(move => move.x === targetX && move.y === targetY);
+        
+        if (isLegalMove) {
+            const fromX = parseInt(selectedSquare.dataset.x);
+            const fromY = parseInt(selectedSquare.dataset.y);
+            movePiece(fromX, fromY, targetX, targetY);
+
+            selectedSquare.classList.remove('selected');    
+            selectedSquare = null;
+            clearValidMoveHighlights();
+            currentValidMoves = [];
+            
+            // FIX 3: Actually redraw the board so the piece moves!
+            renderBoard(); 
+        }
+        else {
+            selectedSquare.classList.remove('selected');    
+            selectedSquare = null;
+            clearValidMoveHighlights();
+            currentValidMoves = [];
+        }
+    }
+}
+
+function highlightValidMoves(moves) {
+    for(let move of moves) {    
+        // FIX 2: Spelled "document" correctly
+        const squareDiv = document.querySelector(`.square[data-x="${move.x}"][data-y="${move.y}"]`);     
+        if(squareDiv) squareDiv.classList.add('valid-move');
+    }   
+}
+
+function clearValidMoveHighlights() {
+    const highlightedSquares = document.querySelectorAll('.square.valid-move');
+    highlightedSquares.forEach(square => square.classList.remove('valid-move'));
 }
