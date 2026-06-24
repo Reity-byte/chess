@@ -70,6 +70,10 @@ async function startGame() {
             await sleep(25);
         }
     }
+    
+    // Check if white is in check at game start
+    updateCheckStatus();
+    
     isGameRunning = false;          
 }
 
@@ -121,7 +125,10 @@ function handleSquareClick(squareDiv) {
             currentValidMoves = [];
             
             // FIX 3: Actually redraw the board so the piece moves!
-            renderBoard(); 
+            renderBoard();
+            
+            // Update check status for the new player
+            updateCheckStatus();
         }
         else {
             selectedSquare.classList.remove('selected');    
@@ -143,4 +150,28 @@ function highlightValidMoves(moves) {
 function clearValidMoveHighlights() {
     const highlightedSquares = document.querySelectorAll('.square.valid-move');
     highlightedSquares.forEach(square => square.classList.remove('valid-move'));
+}
+
+function updateCheckStatus() {
+    // Remove previous check highlights
+    const checkedSquares = document.querySelectorAll('.square.in-check');
+    checkedSquares.forEach(square => square.classList.remove('in-check'));
+    
+    // Find current player's king
+    const kingPos = findKing(currentTurn);
+    if (!kingPos) return; // King not found (shouldn't happen)
+    
+    // Get enemy color
+    const enemyColor = currentTurn === 'white' ? 'black' : 'white';
+    
+    // Check if king is under attack
+    const kingInCheck = isSquareAttacked(kingPos.x, kingPos.y, enemyColor);
+    
+    if (kingInCheck) {
+        // Highlight the king's square in red
+        const kingSquare = document.querySelector(`.square[data-x="${kingPos.x}"][data-y="${kingPos.y}"]`);
+        if (kingSquare) {
+            kingSquare.classList.add('in-check');
+        }
+    }
 }

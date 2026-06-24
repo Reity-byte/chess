@@ -40,7 +40,7 @@ function movePiece(fromX, fromY, toX, toY) {
     currentTurn = currentTurn === 'white' ? 'black' : 'white';
 }
 
-function getvalidMoves(x, y) {
+function getPseudoLegalMoves(x, y) {
     const piece = gameState[y][x];
     if (!piece) return [];
 
@@ -126,8 +126,8 @@ function getvalidMoves(x, y) {
     }
         else if (piece.type === 'knight') {
         const knightMoves = [
-            [x + 2, y + 1], [x + 2, y - 1], [x - 2, y + 1], [x - 2, y - 1],
-            [x + 1, y + 2], [x + 1, y - 2], [x - 1, y + 2], [x - 1, y - 2]
+            [2, 1], [2, -1], [-2, +1], [-2, -1],
+            [1, 2], [1, -2], [-1, 2], [-1, -2]
         ];
 
         for(let offset of knightMoves) {    
@@ -349,4 +349,77 @@ function isValidLanding(targetX, targetY, myColor) {
     }
 
     return true;
+}
+
+function isSquareAttacked(targetX, targetY, enemyColor)
+{
+    for (let y = 0; y < 8; y++)
+    {
+        for (let x = 0; x < 8; x++)
+        {
+           const piece = gameState[y][x]; 
+           
+           if(piece && piece.color === enemyColor)
+           {
+            const enemyMoves = getPseudoLegalMoves(x,y);
+
+            const hitsTarget = enemyMoves.some(move => move.x === targetX && move.y === targetY);
+            if (hitsTarget)
+            {
+                return true;
+            }
+           }
+        }
+    }
+    return false;
+}
+
+function findKing(color){
+    for (let y = 0; y < 8; y++)
+    {
+        for (let x = 0; x < 8; x++)
+        {
+            const piece = gameState[y][x];
+            if(piece && piece.type === 'king' && piece.color === color){
+                return {x:x, y:y};
+            }
+        }
+    }
+    return null;
+}
+
+function getvalidMoves(x, y){
+    const piece = gameState[y][x];
+    if (!piece) return [];
+    
+    const pseudoLegal = getPseudoLegalMoves(x, y);
+    const validMoves = [];
+    
+    // For each pseudo-legal move, simulate it and check if king is in check
+    for (let move of pseudoLegal) {
+        // Save the state
+        const capturedPiece = gameState[move.y][move.x];
+        
+        // Make the move
+        gameState[move.y][move.x] = piece;
+        gameState[y][x] = null;
+        
+        // Find our king
+        const kingPos = findKing(piece.color);
+        const enemyColor = piece.color === 'white' ? 'black' : 'white';
+        
+        // Check if king is under attack
+        const kingInCheck = isSquareAttacked(kingPos.x, kingPos.y, enemyColor);
+        
+        // Undo the move
+        gameState[y][x] = piece;
+        gameState[move.y][move.x] = capturedPiece;
+        
+        // If move doesn't leave king in check, it's legal
+        if (!kingInCheck) {
+            validMoves.push(move);
+        }
+    }
+    
+    return validMoves;
 }

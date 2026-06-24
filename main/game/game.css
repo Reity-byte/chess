@@ -140,3 +140,26 @@
     border-radius: 50%; /* Makes it a circle */
     pointer-events: none; /* Allows clicks to pass through */
 }
+
+.in-check {
+    position: relative; /* create stacking context for z-index */
+    z-index: 9998; /* slightly below selected, but above normal */
+    outline: 2px solid rgba(255, 0, 0, 0.95); /* Red outline for check */
+    outline-offset: 2px; /* keep outline visible outside the element */
+    /* Red glow effect to indicate danger */
+    box-shadow: 0 0 8px 2px rgba(255, 0, 0, 0.9), 0 0 18px 6px rgba(255, 0, 0, 0.6);
+    /* red drop shadow for extra visibility */
+    filter: drop-shadow(0 0 6px rgba(255, 0, 0, 0.7));
+    animation: checkPulse 0.6s infinite ease-in-out alternate; /* pulsing warning effect */
+}
+
+@keyframes checkPulse {
+    0% {
+        box-shadow: 0 0 6px 2px rgba(255, 0, 0, 0.85), 0 0 14px 4px rgba(255, 0, 0, 0.55);
+        filter: drop-shadow(0 0 4px rgba(255, 0, 0, 0.6));
+    }
+    100% {
+        box-shadow: 0 0 18px 6px rgba(255, 0, 0, 0.95), 0 0 34px 12px rgba(255, 0, 0, 0.6);
+        filter: drop-shadow(0 0 12px rgba(255, 0, 0, 0.85));
+    }
+}
