@@ -9,6 +9,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const start = document.getElementById('startButton');
     const exit = document.getElementById('exitButton');
     const board = document.getElementById('chessboard');
+    const restartBtn = document.getElementById('restartButton');
+    const closeBtn = document.getElementById('closeModalButton');
+    const modal = document.getElementById('gameOverModal');
 
     if (board) {
         board.addEventListener('click', (event) => {
@@ -34,6 +37,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (exit) {
         exit.addEventListener('click', () => {
             location.href = '../site.html';
+        });
+    }
+
+    if (restartBtn) {
+        restartBtn.addEventListener('click', () => {
+            // The cleanest way to restart the game is just to reload the page!
+            location.reload(); 
+        });
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            modal.classList.add('hidden'); // Just hide the modal to let them look at the final board
         });
     }
 });
@@ -129,6 +145,8 @@ function handleSquareClick(squareDiv) {
             
             // Update check status for the new player
             updateCheckStatus();
+            //Checks if game is over
+            checkGameOver();
         }
         else {
             selectedSquare.classList.remove('selected');    
@@ -174,4 +192,15 @@ function updateCheckStatus() {
             kingSquare.classList.add('in-check');
         }
     }
+}
+
+function showGameOverModal(message) {
+    const modal = document.getElementById('gameOverModal');
+    const messageElement = document.getElementById('modalMessage');
+    
+    // Set the winning/drawing text
+    messageElement.textContent = message;
+    
+    // Unhide the modal
+    modal.classList.remove('hidden');
 }

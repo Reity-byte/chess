@@ -423,3 +423,43 @@ function getvalidMoves(x, y){
     
     return validMoves;
 }
+
+function checkGameOver(){
+    let hasAnyValidMoves = false;
+
+    for(let y = 0; y < 8; y++)
+    {
+        for(let x = 0; x < 8; x++)
+        {
+            const piece = gameState[y][x];
+
+            if(piece && piece.color === currentTurn)
+            {
+                const moves = getvalidMoves(x, y);
+
+                if(moves.length > 0)
+                {
+                    hasAnyValidMoves = true;
+                    break; //Found at least one move
+                }  
+            }
+        }
+        if(hasAnyValidMoves) break;
+    }
+    if(hasAnyValidMoves) return;
+    
+    const kingPos = findKing(currentTurn);
+    const enemyColor = currentTurn === 'white' ? 'black' : 'white';
+
+    const isCheck = isSquareAttacked(kingPos.x, kingPos.y, enemyColor);
+
+    if (isCheck) {
+        console.log(`RESULT: Checkmate! ${enemyColor} wins!`);
+        // Use the new modal instead of alert!
+        setTimeout(() => showGameOverModal(`Checkmate! ${enemyColor.toUpperCase()} Wins!`), 100);
+    } else {
+        console.log(`RESULT: Stalemate!`);
+        // Use the new modal instead of alert!
+        setTimeout(() => showGameOverModal("Stalemate! It's a draw!"), 100);
+    }
+}
