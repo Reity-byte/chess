@@ -608,3 +608,53 @@ function checkGameOver(){
         setTimeout(() => showGameOverModal("Stalemate! It's a draw!"), 100);
     }
 }
+
+function evaluateBoard()
+{
+    let evalscore = 0;
+    for (let y = 0; y < 8; y++)
+    {
+        for(let x = 0; x < 8; x++)
+        {
+            const piece = gameState[y][x];
+            if(piece)
+            {
+                let pieceValue = 0;
+            if(piece && piece.type === 'pawn')
+            {
+                pieceValue += 100;
+            }
+            if(piece && piece.type === 'rook')
+            {
+                pieceValue += 500;
+            }
+            if(piece && piece.type === 'knight')
+            {
+                pieceValue += 300; 
+            }
+            if(piece && piece.type === 'bishop')
+            {
+                pieceValue += 330;
+            }
+            if(piece && piece.type === 'queen')
+            {
+                pieceValue += 900;
+            }
+            if(piece && piece.type === 'king')
+            {
+                pieceValue += 10000;
+            }
+
+            if(piece.color === 'white')
+            {
+                evalscore += pieceValue;
+            }
+            else
+            {
+                evalscore -= pieceValue;
+            }
+            }
+        }
+    }
+    return evalscore;
+}
