@@ -158,12 +158,21 @@ function handleSquareClick(squareDiv) {
             renderBoard(); // Render the pawn landing on the final square
             
             if (isPromoting) {
-                // Pause the game flow and ask the user what they want!
                 showPromotionModal(targetX, targetY, currentTurn);
             } else {
-                // Not a promotion. Finish turn normally!
                 if (typeof updateCheckStatus === 'function') updateCheckStatus();
                 checkGameOver();
+                
+                // --- LET THE AI PLAY ---
+                if (currentTurn === 'black') {
+                    // Small delay so the board updates visually before the AI freezes the screen to think
+                    setTimeout(() => {
+                        makeAIMove();
+                        renderBoard();
+                        updateCheckStatus();
+                        checkGameOver();
+                    }, 50); 
+                }
             }
         }
         else {
@@ -239,17 +248,21 @@ function showPromotionModal(x, y, color) {
 }
 
 function completePromotion(pieceType) {
-    // 1. Transform the pawn into the selected piece
     gameState[promoTargetY][promoTargetX].type = pieceType;
-
-    // 2. Hide the modal
     document.getElementById('promotionModal').classList.add('hidden');
-
-    // 3. Now that the choice is made, manually flip the turn!
     currentTurn = currentTurn === 'white' ? 'black' : 'white';
-
-    // 4. Finish the visual updates
+    
     renderBoard();
     if (typeof updateCheckStatus === 'function') updateCheckStatus();
     checkGameOver();
+
+    // --- ADD THIS BLOCK SO THE AI MOVES AFTER YOU PROMOTE! ---
+    if (currentTurn === 'black') {
+        setTimeout(() => {
+            makeAIMove();
+            renderBoard();
+            updateCheckStatus();
+            checkGameOver();
+        }, 50); 
+    }
 }
