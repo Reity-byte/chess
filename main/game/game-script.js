@@ -4,6 +4,8 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 let isGameRunning = false;
 let selectedSquare = null;
 let currentValidMoves = [];
+let promoTargetX = null;
+let promoTargetY = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     const start = document.getElementById('startButton');
@@ -52,6 +54,14 @@ document.addEventListener('DOMContentLoaded', () => {
             modal.classList.add('hidden'); // Just hide the modal to let them look at the final board
         });
     }
+
+    const promoPieces = document.querySelectorAll('.promo-piece');
+    promoPieces.forEach(img => {
+        img.addEventListener('click', (event) => {
+            const chosenType = event.target.getAttribute('data-type');
+            completePromotion(chosenType);
+        });
+    });
 });
 
 async function startGame() {
@@ -113,7 +123,7 @@ async function renderBoard() {
 function handleSquareClick(squareDiv) {
     const targetX = parseInt(squareDiv.dataset.x);
     const targetY = parseInt(squareDiv.dataset.y);
-    const targetPiece = gameState[targetY][targetX]; // Fixed the extra spaces here too!
+    const targetPiece = gameState[targetY][targetX]; 
 
     if(targetPiece && targetPiece.color === currentTurn) {
         if (selectedSquare) {
@@ -123,30 +133,38 @@ function handleSquareClick(squareDiv) {
         squareDiv.classList.add('selected');    
         selectedSquare = squareDiv;   
         
-        // FIX 1: Lowercase 'v' to match engine.js
         currentValidMoves = getvalidMoves(targetX, targetY); 
         highlightValidMoves(currentValidMoves);   
     }
     else if (selectedSquare) {  
-        const isLegalMove = currentValidMoves.some(move => move.x === targetX && move.y === targetY);
         
-        if (isLegalMove) {
+        // --- THIS IS THE CHANGED PART ---
+        // We use .find() instead of .some() to grab the actual move object!
+        const chosenMove = currentValidMoves.find(move => move.x === targetX && move.y === targetY);
+        
+        // If chosenMove exists, it was a legal move!
+        if (chosenMove) {
             const fromX = parseInt(selectedSquare.dataset.x);
             const fromY = parseInt(selectedSquare.dataset.y);
-            movePiece(fromX, fromY, targetX, targetY);
+            
+            // Capture whether the move resulted in a promotion
+            const isPromoting = movePiece(fromX, fromY, targetX, targetY, chosenMove);
 
             selectedSquare.classList.remove('selected');    
             selectedSquare = null;
             clearValidMoveHighlights();
             currentValidMoves = [];
             
-            // FIX 3: Actually redraw the board so the piece moves!
-            renderBoard();
+            renderBoard(); // Render the pawn landing on the final square
             
-            // Update check status for the new player
-            updateCheckStatus();
-            //Checks if game is over
-            checkGameOver();
+            if (isPromoting) {
+                // Pause the game flow and ask the user what they want!
+                showPromotionModal(targetX, targetY, currentTurn);
+            } else {
+                // Not a promotion. Finish turn normally!
+                if (typeof updateCheckStatus === 'function') updateCheckStatus();
+                checkGameOver();
+            }
         }
         else {
             selectedSquare.classList.remove('selected');    
@@ -203,4 +221,35 @@ function showGameOverModal(message) {
     
     // Unhide the modal
     modal.classList.remove('hidden');
+}
+
+function showPromotionModal(x, y, color) {
+    promoTargetX = x;
+    promoTargetY = y;
+    
+    // The image paths differ based on your folder structure, usually 'pieces/queen-w.png'
+    const suffix = color === 'white' ? 'w' : 'b';
+    
+    document.getElementById('promo-queen').src = `pieces/queen-${suffix}.png`;
+    document.getElementById('promo-rook').src = `pieces/rook-${suffix}.png`;
+    document.getElementById('promo-bishop').src = `pieces/bishop-${suffix}.png`;
+    document.getElementById('promo-knight').src = `pieces/knight-${suffix}.png`;
+
+    document.getElementById('promotionModal').classList.remove('hidden');
+}
+
+function completePromotion(pieceType) {
+    // 1. Transform the pawn into the selected piece
+    gameState[promoTargetY][promoTargetX].type = pieceType;
+
+    // 2. Hide the modal
+    document.getElementById('promotionModal').classList.add('hidden');
+
+    // 3. Now that the choice is made, manually flip the turn!
+    currentTurn = currentTurn === 'white' ? 'black' : 'white';
+
+    // 4. Finish the visual updates
+    renderBoard();
+    if (typeof updateCheckStatus === 'function') updateCheckStatus();
+    checkGameOver();
 }

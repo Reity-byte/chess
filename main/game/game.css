@@ -273,3 +273,28 @@
         transform: translateY(0) scale(1);
     }
 }
+
+.promotion-options {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}
+
+.promo-piece {
+    width: 70px;
+    height: 70px;
+    cursor: pointer;
+    border: 3px solid transparent;
+    border-radius: 10px;
+    transition: 0.2s;
+    background-color: #7a7a7a; /* A nice retro backdrop for the transparent PNGs */
+    image-rendering: pixelated; 
+    /* Fallback for older browsers */
+    image-rendering: crisp-edges;
+}
+
+.promo-piece:hover {
+    background-color: #a0a0a0;
+    border: 3px solid #ffffff;
+    transform: scale(1.1);
+}

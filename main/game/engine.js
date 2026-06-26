@@ -7,6 +7,7 @@ class ChessPiece {
 }
 
 let currentTurn = 'white';
+let lastMove = null;
 
 function initializeBoard() {        
     const board = [];   
@@ -33,14 +34,54 @@ function initializeBoard() {
 
 let gameState = initializeBoard();
 
-function movePiece(fromX, fromY, toX, toY) {
+function movePiece(fromX, fromY, toX, toY, moveDetails = null) {
+    
+    // 1. Check if this is a Castling move!
+    if (moveDetails && moveDetails.isCastle) {
+        // Teleport the Rook!
+        const rook = gameState[fromY][moveDetails.rookFromX];
+        gameState[fromY][moveDetails.rookToX] = rook;
+        gameState[fromY][moveDetails.rookFromX] = null;
+        rook.hasMoved = true;
+    }
+
+    if(moveDetails && moveDetails.isEnPassant)
+    {
+        gameState[moveDetails.captureY][moveDetails.captureX] = null;
+    }
+
+
+    // 2. Normal move execution (King or any other piece)
     gameState[toY][toX] = gameState[fromY][fromX];
     gameState[fromY][fromX] = null;
     gameState[toY][toX].hasMoved = true;
-    currentTurn = currentTurn === 'white' ? 'black' : 'white';
+    
+    lastMove = {
+        piece: gameState[toY][toX],
+        fromX: fromX,
+        fromY: fromY,
+        toX: toX,
+        toY: toY
+    };
+
+    // --- PAWN PROMOTION CHECK ---
+    let isPromotionMove = false;
+    if (gameState[toY][toX].type === 'pawn') {
+        if (toY === 0 || toY === 7) {
+            isPromotionMove = true;
+        }
+    }
+
+    // ONLY change the turn if we are NOT promoting.
+    // If we are, we wait for the modal to change the turn!
+    if (!isPromotionMove) {
+        currentTurn = currentTurn === 'white' ? 'black' : 'white';
+    }
+
+    return isPromotionMove; // We return this to tell game-script.js what to do!
 }
 
-function getPseudoLegalMoves(x, y) {
+function getPseudoLegalMoves(x, y, checkCastling = true) {
     const piece = gameState[y][x];
     if (!piece) return [];
 
@@ -67,6 +108,56 @@ function getPseudoLegalMoves(x, y) {
             const targetRight = gameState[y + direction][x + 1];
             if (targetRight && targetRight.color !== piece.color) {
                 moves.push({ x: x + 1, y: y + direction });
+            }
+        }
+        // --- EN PASSANT ---
+        if (lastMove) {
+            
+            // 1. LEFT SIDE EN PASSANT
+            if (x - 1 >= 0) { // Don't fall off the left edge!
+                const leftPiece = gameState[y][x - 1];
+
+                // Is there a piece? Is it an ENEMY? Is it a PAWN?
+                if (leftPiece && leftPiece.color !== piece.color && leftPiece.type === 'pawn') {
+                    
+                    // Was THIS EXACT square the destination of the last move?
+                    if (lastMove.toX === x - 1 && lastMove.toY === y) {
+                        
+                        // Did that pawn do a double-jump?
+                        if (Math.abs(lastMove.fromY - lastMove.toY) === 2) {
+                            
+                            // It's a legal En Passant!
+                            moves.push({ 
+                                x: x - 1, 
+                                y: y + direction, 
+                                isEnPassant: true, 
+                                captureX: x - 1, 
+                                captureY: y 
+                            });
+                        }
+                    }
+                }
+            }
+            //2. RIGHT SIDE EN PASSANT
+            if(x + 1 >= 0)
+            {
+                const rightPiece = gameState[y][x + 1];
+                if(rightPiece && rightPiece.color !== piece.color && rightPiece.type === 'pawn')
+                {
+                    if(lastMove.toX === x + 1 && lastMove.toY === y)
+                    {
+                        if(Math.abs(lastMove.fromY - lastMove.toY) === 2)
+                        {
+                            moves.push({
+                                x: x + 1,
+                                y: y + direction,
+                                isEnPassant: true,
+                                captureX: x - 1,
+                                captureY: y
+                            });
+                        }
+                    }
+                }
             }
         }
     } else if (piece.type === 'rook') {
@@ -323,13 +414,66 @@ function getPseudoLegalMoves(x, y) {
     }
 
     } else if (piece.type === 'king') {
+        
+        // 1. Standard Movement
         for (let dx = -1; dx <= 1; dx++) {
             for (let dy = -1; dy <= 1; dy++) {
                 if (dx === 0 && dy === 0) continue;
                 const newX = x + dx;
                 const newY = y + dy;
+                // piece.color is passed here
                 if(isValidLanding(newX, newY, piece.color)) {
                     moves.push({ x: newX, y: newY });
+                }
+            }
+        }
+
+        // 2. Special Move: Castling (Outside the dx/dy loops!)
+        if (checkCastling && piece.hasMoved === false) {
+            
+            const enemyColor = piece.color === 'white' ? 'black' : 'white';
+
+            // Castling Rule: You cannot castle OUT of check!
+            if (isSquareAttacked(x, y, enemyColor) === false) {
+                
+                // --- KINGSIDE (Right) ---
+                const rightRook = gameState[y][7];
+                if (rightRook && rightRook.type === 'rook' && rightRook.hasMoved === false) {
+                    
+                    if (gameState[y][5] === null && gameState[y][6] === null) {
+                        // Is the square the King skips over safe?
+                        if (isSquareAttacked(5, y, enemyColor) === false) {
+                            
+                            // Valid! The King lands on 6. Include the special flags!
+                            moves.push({ 
+                                x: 6, 
+                                y: y, 
+                                isCastle: true, 
+                                rookFromX: 7, 
+                                rookToX: 5 
+                            });
+                        }
+                    }
+                }
+
+                // --- QUEENSIDE (Left) --- (Independent IF statement!)
+                const leftRook = gameState[y][0];
+                if (leftRook && leftRook.type === 'rook' && leftRook.hasMoved === false) {
+                    
+                    if (gameState[y][1] === null && gameState[y][2] === null && gameState[y][3] === null) {
+                        // Is the square the King skips over safe?
+                        if (isSquareAttacked(3, y, enemyColor) === false) {
+                            
+                            // Valid! The King lands on 2. Include the special flags!
+                            moves.push({ 
+                                x: 2, 
+                                y: y, 
+                                isCastle: true, 
+                                rookFromX: 0, 
+                                rookToX: 3 
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -361,7 +505,8 @@ function isSquareAttacked(targetX, targetY, enemyColor)
            
            if(piece && piece.color === enemyColor)
            {
-            const enemyMoves = getPseudoLegalMoves(x,y);
+            // Pass FALSE here to prevent the infinite loop!
+            const enemyMoves = getPseudoLegalMoves(x, y, false);
 
             const hitsTarget = enemyMoves.some(move => move.x === targetX && move.y === targetY);
             if (hitsTarget)
