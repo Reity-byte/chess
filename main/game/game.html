@@ -1,44 +1,88 @@
-<!DOCTYPE HTML>
-    <html lang="en">
+<!DOCTYPE html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chess Game</title>
+    <title>Chess</title>
     <link rel="stylesheet" href="game.css">
-    <script src="engine.js" defer></script>
-    <script src="ai.js" defer></script>
+    <script src="engine.js"   defer></script>
+    <script src="ai.js"       defer></script>
+    <script src="notation.js" defer></script>
     <script src="game-script.js" defer></script>
 </head>
-<body class = "game-body">
-    <div id="chessboard" class="board">
-        <!-- Chess board will be generated here -->
+<body class="game-body">
+
+    <!-- ── MAIN LAYOUT ──────────────────────────────────────────────── -->
+    <div class="game-layout">
+
+        <!-- Board -->
+        <div id="chessboard" class="board"></div>
+
+        <!-- Right sidebar -->
+        <aside class="sidebar">
+
+            <!-- Player tags -->
+            <div class="player-tag player-black">
+                <div class="player-avatar">♟</div>
+                <span class="player-name">Engine (Black)</span>
+            </div>
+
+            <!-- Move history panel -->
+            <div class="history-panel">
+                <div class="history-scroll">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th class="col-num">#</th>
+                                <th class="col-move">White</th>
+                                <th class="col-move">Black</th>
+                            </tr>
+                        </thead>
+                        <tbody id="move-history-body">
+                            <!-- rows injected by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Player tags -->
+            <div class="player-tag player-white">
+                <div class="player-avatar">♙</div>
+                <span class="player-name">You (White)</span>
+            </div>
+
+            <!-- Buttons -->
+            <div class="game-buttons">
+                <button id="startButton"  class="button confirm">Start</button>
+                <button id="exitButton"   class="button cancel">Exit</button>
+            </div>
+
+        </aside>
     </div>
-    <div id="moves" class = "moves">
-        <!-- Move history will be displayed here -->
-    </div>
-    <div class = "game-buttons">
-        <button id="startButton" class="button">Start Game</button>
-        <button id="exitButton" class="button">Exit</button>
-    </div>
+
+    <!-- ── GAME OVER MODAL ───────────────────────────────────────────── -->
     <div id="gameOverModal" class="modal-overlay hidden">
-    <div class="modal-content">
-        <h2 id="modalMessage">Game Over!</h2>
-        <div class="modal-buttons">
-            <button id="restartButton" class="button">Play Again</button>
-            <button id="closeModalButton" class="button">Close</button>
+        <div class="modal-content">
+            <h2 id="modalMessage">Game Over!</h2>
+            <div class="modal-buttons">
+                <button id="restartButton"   class="button confirm">Play Again</button>
+                <button id="closeModalButton" class="button cancel">Close</button>
+            </div>
         </div>
     </div>
-</div>
-<div id="promotionModal" class="modal-overlay hidden">
-    <div class="modal-content">
-        <h2 style="margin-bottom: 20px;">Promote Pawn</h2>
-        <div class="promotion-options">
-            <img id="promo-queen" class="promo-piece" src="" data-type="queen">
-            <img id="promo-rook" class="promo-piece" src="" data-type="rook">
-            <img id="promo-bishop" class="promo-piece" src="" data-type="bishop">
-            <img id="promo-knight" class="promo-piece" src="" data-type="knight">
+
+    <!-- ── PROMOTION MODAL ───────────────────────────────────────────── -->
+    <div id="promotionModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h2 style="margin-bottom:20px">Promote Pawn</h2>
+            <div class="promotion-options">
+                <img id="promo-queen"  class="promo-piece" src="" data-type="queen">
+                <img id="promo-rook"   class="promo-piece" src="" data-type="rook">
+                <img id="promo-bishop" class="promo-piece" src="" data-type="bishop">
+                <img id="promo-knight" class="promo-piece" src="" data-type="knight">
+            </div>
         </div>
     </div>
-</div>
+
 </body>
-    </html>     
+</html>

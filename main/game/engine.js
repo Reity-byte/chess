@@ -1,4 +1,4 @@
-class ChessPiece {      
+class ChessPiece {
     constructor(type, color) {
         this.type = type;
         this.color = color;
@@ -9,471 +9,220 @@ class ChessPiece {
 let currentTurn = 'white';
 let lastMove = null;
 
-function initializeBoard() {        
-    const board = [];   
+// --- DRAW DETECTION STATE ---
+// positionHistory maps a board FEN-like key -> count, for threefold repetition
+let positionHistory = {};
+// halfMoveClock counts moves since last pawn move or capture (for 50-move rule)
+let halfMoveClock = 0;
 
-    for(let y = 0; y < 8; y++) {
+function initializeBoard() {
+    const board = [];
+    for (let y = 0; y < 8; y++) {
         const row = [];
-        for(let x = 0; x < 8; x++) {
-            row.push(null);
-        }   
-        board.push(row);    
+        for (let x = 0; x < 8; x++) row.push(null);
+        board.push(row);
     }
-
-    let backRowLayout = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
-
-    for(let x = 0; x < 8; x++) {    
-        board[0][x] = new ChessPiece(backRowLayout[x], 'black');
+    const backRow = ['rook','knight','bishop','queen','king','bishop','knight','rook'];
+    for (let x = 0; x < 8; x++) {
+        board[0][x] = new ChessPiece(backRow[x], 'black');
         board[1][x] = new ChessPiece('pawn', 'black');
         board[6][x] = new ChessPiece('pawn', 'white');
-        board[7][x] = new ChessPiece(backRowLayout[x], 'white');
+        board[7][x] = new ChessPiece(backRow[x], 'white');
     }
-    
-    return board;       
+    return board;
 }
 
 let gameState = initializeBoard();
 
+// ─── POSITION HASHING (for threefold repetition) ──────────────────────────────
+function getBoardKey() {
+    let key = currentTurn + '|';
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            key += p ? `${p.color[0]}${p.type[0]}${p.hasMoved?1:0}` : '.';
+        }
+        key += '/';
+    }
+    return key;
+}
+
+function recordPosition() {
+    const key = getBoardKey();
+    positionHistory[key] = (positionHistory[key] || 0) + 1;
+    return positionHistory[key];
+}
+
+// ─── INSUFFICIENT MATERIAL CHECK ──────────────────────────────────────────────
+function isInsufficientMaterial() {
+    const pieces = { white: [], black: [] };
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            if (p && p.type !== 'king') pieces[p.color].push({ type: p.type, x, y });
+        }
+    }
+    const w = pieces.white;
+    const b = pieces.black;
+
+    // K vs K
+    if (w.length === 0 && b.length === 0) return true;
+    // K vs K+B or K vs K+N
+    if (w.length === 0 && b.length === 1 && (b[0].type === 'bishop' || b[0].type === 'knight')) return true;
+    if (b.length === 0 && w.length === 1 && (w[0].type === 'bishop' || w[0].type === 'knight')) return true;
+    // K+B vs K+B same color squares
+    if (w.length === 1 && b.length === 1 && w[0].type === 'bishop' && b[0].type === 'bishop') {
+        const wLight = (w[0].x + w[0].y) % 2;
+        const bLight = (b[0].x + b[0].y) % 2;
+        if (wLight === bLight) return true;
+    }
+    return false;
+}
+
+// ─── MOVE PIECE ───────────────────────────────────────────────────────────────
 function movePiece(fromX, fromY, toX, toY, moveDetails = null) {
-    
-    // 1. Check if this is a Castling move!
+    const movingPiece = gameState[fromY][fromX];
+    const capturedPiece = gameState[toY][toX];
+
+    // Castling: teleport the rook
     if (moveDetails && moveDetails.isCastle) {
-        // Teleport the Rook!
         const rook = gameState[fromY][moveDetails.rookFromX];
         gameState[fromY][moveDetails.rookToX] = rook;
         gameState[fromY][moveDetails.rookFromX] = null;
         rook.hasMoved = true;
     }
 
-    if(moveDetails && moveDetails.isEnPassant)
-    {
+    // En passant: remove the captured pawn
+    if (moveDetails && moveDetails.isEnPassant) {
         gameState[moveDetails.captureY][moveDetails.captureX] = null;
     }
 
-
-    // 2. Normal move execution (King or any other piece)
-    gameState[toY][toX] = gameState[fromY][fromX];
+    // Execute the move
+    gameState[toY][toX] = movingPiece;
     gameState[fromY][fromX] = null;
     gameState[toY][toX].hasMoved = true;
-    
-    lastMove = {
-        piece: gameState[toY][toX],
-        fromX: fromX,
-        fromY: fromY,
-        toX: toX,
-        toY: toY
-    };
 
-    // --- PAWN PROMOTION CHECK ---
-    let isPromotionMove = false;
-    if (gameState[toY][toX].type === 'pawn') {
-        if (toY === 0 || toY === 7) {
-            isPromotionMove = true;
-        }
+    lastMove = { piece: gameState[toY][toX], fromX, fromY, toX, toY };
+
+    // Update half-move clock (reset on pawn move or capture, else increment)
+    if (movingPiece.type === 'pawn' || capturedPiece || (moveDetails && moveDetails.isEnPassant)) {
+        halfMoveClock = 0;
+    } else {
+        halfMoveClock++;
     }
 
-    // ONLY change the turn if we are NOT promoting.
-    // If we are, we wait for the modal to change the turn!
+    // Promotion check
+    const isPromotionMove = movingPiece.type === 'pawn' && (toY === 0 || toY === 7);
     if (!isPromotionMove) {
         currentTurn = currentTurn === 'white' ? 'black' : 'white';
     }
 
-    return isPromotionMove; // We return this to tell game-script.js what to do!
+    return isPromotionMove;
 }
 
+// ─── PSEUDO-LEGAL MOVE GENERATION ────────────────────────────────────────────
 function getPseudoLegalMoves(x, y, checkCastling = true) {
     const piece = gameState[y][x];
     if (!piece) return [];
 
     const moves = [];
+
     if (piece.type === 'pawn') {
         const direction = piece.color === 'white' ? -1 : 1;
-        const startRow = piece.color === 'white' ? 6 : 1;
+        const startRow  = piece.color === 'white' ? 6 : 1;
 
-        if(y + direction >= 0 && y + direction < 8) {   
-            if (gameState[y + direction][x] === null) { 
-                moves.push({ x: x, y: y + direction });
+        // Forward
+        if (y + direction >= 0 && y + direction < 8) {
+            if (gameState[y + direction][x] === null) {
+                moves.push({ x, y: y + direction });
                 if (y === startRow && gameState[y + 2 * direction][x] === null) {
-                    moves.push({ x: x, y: y + direction * 2 });
+                    moves.push({ x, y: y + direction * 2 });
                 }
             }
         }
-        if(x - 1 >= 0 && y + direction >= 0 && y + direction < 8) {
-            const targetLeft = gameState[y + direction][x - 1];
-            if (targetLeft && targetLeft.color !== piece.color) {
-                moves.push({ x: x - 1, y: y + direction });
+        // Diagonal captures
+        for (const dx of [-1, 1]) {
+            const nx = x + dx;
+            const ny = y + direction;
+            if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
+                const target = gameState[ny][nx];
+                if (target && target.color !== piece.color) moves.push({ x: nx, y: ny });
             }
         }
-        if(x + 1 < 8 && y + direction >= 0 && y + direction < 8) {
-            const targetRight = gameState[y + direction][x + 1];
-            if (targetRight && targetRight.color !== piece.color) {
-                moves.push({ x: x + 1, y: y + direction });
-            }
-        }
-        // --- EN PASSANT ---
+        // En passant
         if (lastMove) {
-            
-            // 1. LEFT SIDE EN PASSANT
-            if (x - 1 >= 0) { // Don't fall off the left edge!
-                const leftPiece = gameState[y][x - 1];
-
-                // Is there a piece? Is it an ENEMY? Is it a PAWN?
-                if (leftPiece && leftPiece.color !== piece.color && leftPiece.type === 'pawn') {
-                    
-                    // Was THIS EXACT square the destination of the last move?
-                    if (lastMove.toX === x - 1 && lastMove.toY === y) {
-                        
-                        // Did that pawn do a double-jump?
-                        if (Math.abs(lastMove.fromY - lastMove.toY) === 2) {
-                            
-                            // It's a legal En Passant!
-                            moves.push({ 
-                                x: x - 1, 
-                                y: y + direction, 
-                                isEnPassant: true, 
-                                captureX: x - 1, 
-                                captureY: y 
-                            });
-                        }
-                    }
-                }
-            }
-            //2. RIGHT SIDE EN PASSANT
-            if(x + 1 >= 0)
-            {
-                const rightPiece = gameState[y][x + 1];
-                if(rightPiece && rightPiece.color !== piece.color && rightPiece.type === 'pawn')
-                {
-                    if(lastMove.toX === x + 1 && lastMove.toY === y)
-                    {
-                        if(Math.abs(lastMove.fromY - lastMove.toY) === 2)
-                        {
-                            moves.push({
-                                x: x + 1,
-                                y: y + direction,
-                                isEnPassant: true,
-                                captureX: x - 1,
-                                captureY: y
-                            });
-                        }
-                    }
+            for (const dx of [-1, 1]) {
+                const nx = x + dx;
+                if (nx < 0 || nx >= 8) continue;
+                const adjacent = gameState[y][nx];
+                if (adjacent && adjacent.color !== piece.color && adjacent.type === 'pawn'
+                    && lastMove.toX === nx && lastMove.toY === y
+                    && Math.abs(lastMove.fromY - lastMove.toY) === 2) {
+                    moves.push({ x: nx, y: y + direction, isEnPassant: true, captureX: nx, captureY: y });
                 }
             }
         }
-    } else if (piece.type === 'rook') {
-    
-    // 1. Raycast RIGHT (+x)
-    let currentX = x + 1;
-    while (currentX < 8) {
-        const targetSquare = gameState[y][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: y });
-            currentX++; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: y });
-            break; 
-        }
-    }
 
-    // 2. Raycast LEFT (-x)
-    currentX = x - 1;
-    while (currentX >= 0) {
-        const targetSquare = gameState[y][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: y });
-            currentX--; // Notice we subtract here!
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: y });
-            break; 
+    } else if (piece.type === 'knight') {
+        for (const [dx, dy] of [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]) {
+            const nx = x + dx, ny = y + dy;
+            if (isValidLanding(nx, ny, piece.color)) moves.push({ x: nx, y: ny });
         }
-    }
 
-    // 3. Raycast DOWN (+y)
-    let currentY = y + 1;
-    while (currentY < 8) {
-        const targetSquare = gameState[currentY][x]; // Notice y is changing, x is static
-        if (targetSquare === null) {
-            moves.push({ x: x, y: currentY });
-            currentY++; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: x, y: currentY });
-            break; 
-        }
-    }
-
-    // 4. Raycast UP (-y)
-    currentY = y - 1;
-    while (currentY >= 0) {
-        const targetSquare = gameState[currentY][x];
-        if (targetSquare === null) {
-            moves.push({ x: x, y: currentY });
-            currentY--; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: x, y: currentY });
-            break; 
-        }
-    }
-
-    }
-        else if (piece.type === 'knight') {
-        const knightMoves = [
-            [2, 1], [2, -1], [-2, +1], [-2, -1],
-            [1, 2], [1, -2], [-1, 2], [-1, -2]
-        ];
-
-        for(let offset of knightMoves) {    
-            const newX = x + offset[0];
-            const newY = y + offset[1];
-            if(isValidLanding(newX, newY, piece.color)) {
-                moves.push({ x: newX, y: newY });
-            }
-        }
     } else if (piece.type === 'bishop') {
+        for (const [dx, dy] of [[1,1],[1,-1],[-1,1],[-1,-1]]) {
+            let cx = x + dx, cy = y + dy;
+            while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
+                const t = gameState[cy][cx];
+                if (t === null) { moves.push({ x: cx, y: cy }); cx += dx; cy += dy; }
+                else { if (t.color !== piece.color) moves.push({ x: cx, y: cy }); break; }
+            }
+        }
 
-    // 1. Raycast DOWN-RIGHT (+x, +y)
-    let currentX = x + 1;
-    let currentY = y + 1;
-    
-    // We must check BOTH boundaries!
-    while (currentX < 8 && currentY < 8) {
-        const targetSquare = gameState[currentY][currentX]; 
-        
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: currentY });
-            
-            // Increment BOTH to keep moving diagonally
-            currentX++; 
-            currentY++; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: currentY });
-            break; 
+    } else if (piece.type === 'rook') {
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            let cx = x + dx, cy = y + dy;
+            while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
+                const t = gameState[cy][cx];
+                if (t === null) { moves.push({ x: cx, y: cy }); cx += dx; cy += dy; }
+                else { if (t.color !== piece.color) moves.push({ x: cx, y: cy }); break; }
+            }
         }
-    }
-
-    // 2. Raycast DOWN-LEFT (-x, +y)
-    currentX = x - 1;
-    currentY = y + 1;
-    while (currentX >= 0 && currentY < 8) {
-        const targetSquare = gameState[currentY][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: currentY });
-            currentX--; 
-            currentY++; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: currentY });
-            break; 
-        }
-    }
-    // 3. Raycast UP-RIGHT (+x, -y)
-    currentX = x + 1;
-    currentY = y - 1;
-    while (currentX < 8 && currentY >= 0) {
-        const targetSquare = gameState[currentY][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: currentY });
-            currentX++; 
-            currentY--; 
-        }
-        else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: currentY });
-            break; 
-        }   
-    }
-    // 4. Raycast UP-LEFT (-x, -y)
-    currentX = x - 1;
-    currentY = y - 1;
-    while (currentX >= 0 && currentY >= 0) {
-        const targetSquare = gameState[currentY][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: currentY });
-            currentX--; 
-            currentY--; 
-        }
-        else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: currentY });
-            break; 
-        }
-    }
 
     } else if (piece.type === 'queen') {
-        // 1. Raycast RIGHT (+x)
-    let currentX = x + 1;
-    while (currentX < 8) {
-        const targetSquare = gameState[y][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: y });
-            currentX++; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: y });
-            break; 
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) {
+            let cx = x + dx, cy = y + dy;
+            while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
+                const t = gameState[cy][cx];
+                if (t === null) { moves.push({ x: cx, y: cy }); cx += dx; cy += dy; }
+                else { if (t.color !== piece.color) moves.push({ x: cx, y: cy }); break; }
+            }
         }
-    }
-
-    // 2. Raycast LEFT (-x)
-    currentX = x - 1;
-    while (currentX >= 0) {
-        const targetSquare = gameState[y][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: y });
-            currentX--; // Notice we subtract here!
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: y });
-            break; 
-        }
-    }
-
-    // 3. Raycast DOWN (+y)
-    let currentY = y + 1;
-    while (currentY < 8) {
-        const targetSquare = gameState[currentY][x]; // Notice y is changing, x is static
-        if (targetSquare === null) {
-            moves.push({ x: x, y: currentY });
-            currentY++; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: x, y: currentY });
-            break; 
-        }
-    }
-
-    // 4. Raycast UP (-y)
-    currentY = y - 1;
-    while (currentY >= 0) {
-        const targetSquare = gameState[currentY][x];
-        if (targetSquare === null) {
-            moves.push({ x: x, y: currentY });
-            currentY--; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: x, y: currentY });
-            break; 
-        }
-    }
-
-    // 1. Raycast DOWN-RIGHT (+x, +y)
-    currentX = x + 1;
-    currentY = y + 1;
-    
-    // We must check BOTH boundaries!
-    while (currentX < 8 && currentY < 8) {
-        const targetSquare = gameState[currentY][currentX]; 
-        
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: currentY });
-            
-            // Increment BOTH to keep moving diagonally
-            currentX++; 
-            currentY++; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: currentY });
-            break; 
-        }
-    }
-
-    // 2. Raycast DOWN-LEFT (-x, +y)
-    currentX = x - 1;
-    currentY = y + 1;
-    while (currentX >= 0 && currentY < 8) {
-        const targetSquare = gameState[currentY][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: currentY });
-            currentX--; 
-            currentY++; 
-        } else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: currentY });
-            break; 
-        }
-    }
-    // 3. Raycast UP-RIGHT (+x, -y)
-    currentX = x + 1;
-    currentY = y - 1;
-    while (currentX < 8 && currentY >= 0) {
-        const targetSquare = gameState[currentY][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: currentY });
-            currentX++; 
-            currentY--; 
-        }
-        else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: currentY });
-            break; 
-        }   
-    }
-    // 4. Raycast UP-LEFT (-x, -y)
-    currentX = x - 1;
-    currentY = y - 1;
-    while (currentX >= 0 && currentY >= 0) {
-        const targetSquare = gameState[currentY][currentX];
-        if (targetSquare === null) {
-            moves.push({ x: currentX, y: currentY });
-            currentX--; 
-            currentY--; 
-        }
-        else {
-            if (targetSquare.color !== piece.color) moves.push({ x: currentX, y: currentY });
-            break; 
-        }
-    }
 
     } else if (piece.type === 'king') {
-        
-        // 1. Standard Movement
         for (let dx = -1; dx <= 1; dx++) {
             for (let dy = -1; dy <= 1; dy++) {
                 if (dx === 0 && dy === 0) continue;
-                const newX = x + dx;
-                const newY = y + dy;
-                // piece.color is passed here
-                if(isValidLanding(newX, newY, piece.color)) {
-                    moves.push({ x: newX, y: newY });
-                }
+                if (isValidLanding(x + dx, y + dy, piece.color)) moves.push({ x: x + dx, y: y + dy });
             }
         }
-
-        // 2. Special Move: Castling (Outside the dx/dy loops!)
-        if (checkCastling && piece.hasMoved === false) {
-            
-            const enemyColor = piece.color === 'white' ? 'black' : 'white';
-
-            // Castling Rule: You cannot castle OUT of check!
-            if (isSquareAttacked(x, y, enemyColor) === false) {
-                
-                // --- KINGSIDE (Right) ---
-                const rightRook = gameState[y][7];
-                if (rightRook && rightRook.type === 'rook' && rightRook.hasMoved === false) {
-                    
-                    if (gameState[y][5] === null && gameState[y][6] === null) {
-                        // Is the square the King skips over safe?
-                        if (isSquareAttacked(5, y, enemyColor) === false) {
-                            
-                            // Valid! The King lands on 6. Include the special flags!
-                            moves.push({ 
-                                x: 6, 
-                                y: y, 
-                                isCastle: true, 
-                                rookFromX: 7, 
-                                rookToX: 5 
-                            });
-                        }
-                    }
+        // Castling
+        if (checkCastling && !piece.hasMoved) {
+            const enemy = piece.color === 'white' ? 'black' : 'white';
+            if (!isSquareAttacked(x, y, enemy)) {
+                // Kingside
+                const kRook = gameState[y][7];
+                if (kRook && kRook.type === 'rook' && !kRook.hasMoved
+                    && gameState[y][5] === null && gameState[y][6] === null
+                    && !isSquareAttacked(5, y, enemy)) {
+                    moves.push({ x: 6, y, isCastle: true, rookFromX: 7, rookToX: 5 });
                 }
-
-                // --- QUEENSIDE (Left) --- (Independent IF statement!)
-                const leftRook = gameState[y][0];
-                if (leftRook && leftRook.type === 'rook' && leftRook.hasMoved === false) {
-                    
-                    if (gameState[y][1] === null && gameState[y][2] === null && gameState[y][3] === null) {
-                        // Is the square the King skips over safe?
-                        if (isSquareAttacked(3, y, enemyColor) === false) {
-                            
-                            // Valid! The King lands on 2. Include the special flags!
-                            moves.push({ 
-                                x: 2, 
-                                y: y, 
-                                isCastle: true, 
-                                rookFromX: 0, 
-                                rookToX: 3 
-                            });
-                        }
-                    }
+                // Queenside
+                const qRook = gameState[y][0];
+                if (qRook && qRook.type === 'rook' && !qRook.hasMoved
+                    && gameState[y][1] === null && gameState[y][2] === null && gameState[y][3] === null
+                    && !isSquareAttacked(3, y, enemy)) {
+                    moves.push({ x: 2, y, isCastle: true, rookFromX: 0, rookToX: 3 });
                 }
             }
         }
@@ -482,179 +231,100 @@ function getPseudoLegalMoves(x, y, checkCastling = true) {
     return moves;
 }
 
-function isValidLanding(targetX, targetY, myColor) {
-    if (targetX < 0 || targetX >= 8 || targetY < 0 || targetY >= 8) {
-        return false;
-    }
-
-    const targetPiece = gameState[targetY][targetX];
-    if (targetPiece) {
-        return targetPiece.color !== myColor;
-    }
-
-    return true;
+function isValidLanding(tx, ty, myColor) {
+    if (tx < 0 || tx >= 8 || ty < 0 || ty >= 8) return false;
+    const t = gameState[ty][tx];
+    return !t || t.color !== myColor;
 }
 
-function isSquareAttacked(targetX, targetY, enemyColor)
-{
-    for (let y = 0; y < 8; y++)
-    {
-        for (let x = 0; x < 8; x++)
-        {
-           const piece = gameState[y][x]; 
-           
-           if(piece && piece.color === enemyColor)
-           {
-            // Pass FALSE here to prevent the infinite loop!
-            const enemyMoves = getPseudoLegalMoves(x, y, false);
-
-            const hitsTarget = enemyMoves.some(move => move.x === targetX && move.y === targetY);
-            if (hitsTarget)
-            {
-                return true;
+function isSquareAttacked(tx, ty, enemyColor) {
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            if (p && p.color === enemyColor) {
+                if (getPseudoLegalMoves(x, y, false).some(m => m.x === tx && m.y === ty)) return true;
             }
-           }
         }
     }
     return false;
 }
 
-function findKing(color){
+function findKing(color) {
     for (let y = 0; y < 8; y++)
-    {
         for (let x = 0; x < 8; x++)
-        {
-            const piece = gameState[y][x];
-            if(piece && piece.type === 'king' && piece.color === color){
-                return {x:x, y:y};
-            }
-        }
-    }
+            if (gameState[y][x]?.type === 'king' && gameState[y][x]?.color === color)
+                return { x, y };
     return null;
 }
 
-function getvalidMoves(x, y){
+function getvalidMoves(x, y) {
     const piece = gameState[y][x];
     if (!piece) return [];
-    
-    const pseudoLegal = getPseudoLegalMoves(x, y);
+
     const validMoves = [];
-    
-    // For each pseudo-legal move, simulate it and check if king is in check
-    for (let move of pseudoLegal) {
-        // Save the state
-        const capturedPiece = gameState[move.y][move.x];
-        
-        // Make the move
+    for (const move of getPseudoLegalMoves(x, y)) {
+        // Save
+        const captured = gameState[move.y][move.x];
+        let epCaptured = null;
+        if (move.isEnPassant) { epCaptured = gameState[move.captureY][move.captureX]; gameState[move.captureY][move.captureX] = null; }
+
         gameState[move.y][move.x] = piece;
         gameState[y][x] = null;
-        
-        // Find our king
-        const kingPos = findKing(piece.color);
-        const enemyColor = piece.color === 'white' ? 'black' : 'white';
-        
-        // Check if king is under attack
-        const kingInCheck = isSquareAttacked(kingPos.x, kingPos.y, enemyColor);
-        
-        // Undo the move
+
+        const kp = findKing(piece.color);
+        const safe = kp && !isSquareAttacked(kp.x, kp.y, piece.color === 'white' ? 'black' : 'white');
+
+        // Restore
         gameState[y][x] = piece;
-        gameState[move.y][move.x] = capturedPiece;
-        
-        // If move doesn't leave king in check, it's legal
-        if (!kingInCheck) {
-            validMoves.push(move);
-        }
+        gameState[move.y][move.x] = captured;
+        if (move.isEnPassant) gameState[move.captureY][move.captureX] = epCaptured;
+
+        if (safe) validMoves.push(move);
     }
-    
     return validMoves;
 }
 
-function checkGameOver(){
-    let hasAnyValidMoves = false;
+// ─── GAME OVER CHECK (checkmate, stalemate, draws) ───────────────────────────
+function checkGameOver() {
+    // 1. Threefold repetition
+    const repCount = positionHistory[getBoardKey()] || 0;
+    if (repCount >= 3) {
+        setTimeout(() => showGameOverModal("Draw by Threefold Repetition!"), 100);
+        return;
+    }
 
-    for(let y = 0; y < 8; y++)
-    {
-        for(let x = 0; x < 8; x++)
-        {
-            const piece = gameState[y][x];
+    // 2. 50-move rule
+    if (halfMoveClock >= 100) {  // 100 half-moves = 50 full moves
+        setTimeout(() => showGameOverModal("Draw by 50-Move Rule!"), 100);
+        return;
+    }
 
-            if(piece && piece.color === currentTurn)
-            {
-                const moves = getvalidMoves(x, y);
+    // 3. Insufficient material
+    if (isInsufficientMaterial()) {
+        setTimeout(() => showGameOverModal("Draw by Insufficient Material!"), 100);
+        return;
+    }
 
-                if(moves.length > 0)
-                {
-                    hasAnyValidMoves = true;
-                    break; //Found at least one move
-                }  
+    // 4. Checkmate / Stalemate
+    let hasAnyMove = false;
+    outer: for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            if (p && p.color === currentTurn && getvalidMoves(x, y).length > 0) {
+                hasAnyMove = true;
+                break outer;
             }
         }
-        if(hasAnyValidMoves) break;
     }
-    if(hasAnyValidMoves) return;
-    
-    const kingPos = findKing(currentTurn);
-    const enemyColor = currentTurn === 'white' ? 'black' : 'white';
+    if (hasAnyMove) return;
 
-    const isCheck = isSquareAttacked(kingPos.x, kingPos.y, enemyColor);
+    const kp = findKing(currentTurn);
+    const enemy = currentTurn === 'white' ? 'black' : 'white';
+    const inCheck = kp && isSquareAttacked(kp.x, kp.y, enemy);
 
-    if (isCheck) {
-        console.log(`RESULT: Checkmate! ${enemyColor} wins!`);
-        // Use the new modal instead of alert!
-        setTimeout(() => showGameOverModal(`Checkmate! ${enemyColor.toUpperCase()} Wins!`), 100);
+    if (inCheck) {
+        setTimeout(() => showGameOverModal(`Checkmate! ${enemy.toUpperCase()} Wins! ♛`), 100);
     } else {
-        console.log(`RESULT: Stalemate!`);
-        // Use the new modal instead of alert!
-        setTimeout(() => showGameOverModal("Stalemate! It's a draw!"), 100);
+        setTimeout(() => showGameOverModal("Stalemate! It's a Draw!"), 100);
     }
-}
-
-function evaluateBoard()
-{
-    let evalscore = 0;
-    for (let y = 0; y < 8; y++)
-    {
-        for(let x = 0; x < 8; x++)
-        {
-            const piece = gameState[y][x];
-            if(piece)
-            {
-                let pieceValue = 0;
-            if(piece && piece.type === 'pawn')
-            {
-                pieceValue += 100;
-            }
-            if(piece && piece.type === 'rook')
-            {
-                pieceValue += 500;
-            }
-            if(piece && piece.type === 'knight')
-            {
-                pieceValue += 300; 
-            }
-            if(piece && piece.type === 'bishop')
-            {
-                pieceValue += 330;
-            }
-            if(piece && piece.type === 'queen')
-            {
-                pieceValue += 900;
-            }
-            if(piece && piece.type === 'king')
-            {
-                pieceValue += 10000;
-            }
-
-            if(piece.color === 'white')
-            {
-                evalscore += pieceValue;
-            }
-            else
-            {
-                evalscore -= pieceValue;
-            }
-            }
-        }
-    }
-    return evalscore;
 }

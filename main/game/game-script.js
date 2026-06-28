@@ -1,30 +1,77 @@
-   
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-let isGameRunning = false;
-let selectedSquare = null;
+let isGameRunning   = false;
+let selectedSquare  = null;
 let currentValidMoves = [];
-let promoTargetX = null;
-let promoTargetY = null;
+let promoTargetX    = null;
+let promoTargetY    = null;
 
+// ─── MOVE HISTORY ─────────────────────────────────────────────────────────────
+// Each entry: { white: 'e4', black: 'e5' | null }
+let moveHistory = [];
+let pendingWhiteSAN = null;  // white's SAN waits here until black replies
+
+// Called before movePiece() so the board is still in pre-move state
+function recordMove(fromX, fromY, toX, toY, details, promoType = null) {
+    const san = moveToSAN(fromX, fromY, toX, toY, details, promoType);
+
+    if (currentTurn === 'white') {
+        // White just moved – open a new row
+        moveHistory.push({ white: san, black: null });
+    } else {
+        // Black just moved – close the current row
+        if (moveHistory.length === 0) moveHistory.push({ white: '…', black: null });
+        moveHistory[moveHistory.length - 1].black = san;
+    }
+
+    renderMoveHistory();
+    return san;
+}
+
+function renderMoveHistory() {
+    const panel = document.getElementById('move-history-body');
+    if (!panel) return;
+
+    panel.innerHTML = '';
+
+    moveHistory.forEach((row, i) => {
+        const tr = document.createElement('tr');
+
+        const tdNum = document.createElement('td');
+        tdNum.className = 'move-num';
+        tdNum.textContent = (i + 1) + '.';
+
+        const tdW = document.createElement('td');
+        tdW.className = 'move-san move-white';
+        tdW.textContent = row.white || '';
+
+        const tdB = document.createElement('td');
+        tdB.className = 'move-san move-black';
+        tdB.textContent = row.black || '';
+
+        tr.appendChild(tdNum);
+        tr.appendChild(tdW);
+        tr.appendChild(tdB);
+        panel.appendChild(tr);
+    });
+
+    // Auto-scroll to latest move
+    panel.scrollTop = panel.scrollHeight;
+}
+
+// ─── DOM SETUP ────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    const start = document.getElementById('startButton');
-    const exit = document.getElementById('exitButton');
-    const board = document.getElementById('chessboard');
+    const start      = document.getElementById('startButton');
+    const exit       = document.getElementById('exitButton');
+    const board      = document.getElementById('chessboard');
     const restartBtn = document.getElementById('restartButton');
-    const closeBtn = document.getElementById('closeModalButton');
-    const modal = document.getElementById('gameOverModal');
+    const closeBtn   = document.getElementById('closeModalButton');
+    const modal      = document.getElementById('gameOverModal');
 
     if (board) {
-        board.addEventListener('click', (event) => {
-            // Find the square wrapper, regardless of whether they clicked the piece or the empty space
-            const clickedSquareDiv = event.target.closest('.square');
-            
-            // If they clicked the board border (not a square), ignore it
-            if (!clickedSquareDiv) return; 
-
-            // Pass the HTML div directly into your function
-            handleSquareClick(clickedSquareDiv);
+        board.addEventListener('click', e => {
+            const sq = e.target.closest('.square');
+            if (sq) handleSquareClick(sq);
         });
     }
 
@@ -36,233 +83,211 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (exit) {
-        exit.addEventListener('click', () => {
-            location.href = '../site.html';
-        });
-    }
+    if (exit)       exit.addEventListener('click', () => { location.href = '../site.html'; });
+    if (restartBtn) restartBtn.addEventListener('click', () => location.reload());
+    if (closeBtn)   closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
 
-    if (restartBtn) {
-        restartBtn.addEventListener('click', () => {
-            // The cleanest way to restart the game is just to reload the page!
-            location.reload(); 
-        });
-    }
-
-    if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-            modal.classList.add('hidden'); // Just hide the modal to let them look at the final board
-        });
-    }
-
-    const promoPieces = document.querySelectorAll('.promo-piece');
-    promoPieces.forEach(img => {
-        img.addEventListener('click', (event) => {
-            const chosenType = event.target.getAttribute('data-type');
-            completePromotion(chosenType);
-        });
+    document.querySelectorAll('.promo-piece').forEach(img => {
+        img.addEventListener('click', e => completePromotion(e.target.getAttribute('data-type')));
     });
 });
 
+// ─── BOARD INIT ───────────────────────────────────────────────────────────────
 async function startGame() {
-    isGameRunning = true;          
+    isGameRunning = true;
     const board = document.getElementById('chessboard');
-    
     board.innerHTML = '';
 
-    for(let y = 0; y < 8; y++) {
-        for(let x = 0; x < 8; x++) {
-            let square = document.createElement('div');
-            square.className = 'square';
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const sq = document.createElement('div');
+            sq.className = 'square ' + ((x + y) % 2 === 0 ? 'light' : 'dark');
+            sq.dataset.x = x;
+            sq.dataset.y = y;
 
-            square.dataset.x = x;
-            square.dataset.y = y;
-
-            if((x + y) % 2 === 0) {
-                square.classList.add('white');
-            } else {
-                square.classList.add('black');
+            if (x === 0) {
+                const lbl = document.createElement('span');
+                lbl.className = 'coord-rank';
+                lbl.textContent = 8 - y;
+                sq.appendChild(lbl);
+            }
+            if (y === 7) {
+                const lbl = document.createElement('span');
+                lbl.className = 'coord-file';
+                lbl.textContent = 'abcdefgh'[x];
+                sq.appendChild(lbl);
             }
 
             const piece = gameState[y][x];
-            if(piece) {
-                const pieceElement = document.createElement('div');
-                pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
-                square.appendChild(pieceElement);
+            if (piece) {
+                const pe = document.createElement('div');
+                pe.className = `piece piece-${piece.color} ${piece.type}`;
+                sq.appendChild(pe);
             }
-            
 
-            board.appendChild(square);
-            await sleep(25);
+            board.appendChild(sq);
+            await sleep(20);
         }
     }
-    
-    // Check if white is in check at game start
+
+    recordPosition();
     updateCheckStatus();
-    
-    isGameRunning = false;          
+    isGameRunning = false;
 }
 
-
-async function renderBoard() {
-    for(let y = 0; y < 8; y++) {        
-        for(let x = 0; x < 8; x++) {    
-            const square = document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`);
-            square.innerHTML = '';
-
+function renderBoard() {
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const sq = document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`);
+            sq.querySelectorAll('.piece').forEach(el => el.remove());
             const piece = gameState[y][x];
-            if(piece) {
-                const pieceElement = document.createElement('div');
-                pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
-                square.appendChild(pieceElement);
-            }  
+            if (piece) {
+                const pe = document.createElement('div');
+                pe.className = `piece piece-${piece.color} ${piece.type}`;
+                sq.appendChild(pe);
+            }
         }
     }
 }
 
+// ─── CLICK HANDLER ────────────────────────────────────────────────────────────
 function handleSquareClick(squareDiv) {
-    const targetX = parseInt(squareDiv.dataset.x);
-    const targetY = parseInt(squareDiv.dataset.y);
-    const targetPiece = gameState[targetY][targetX]; 
+    const tx = parseInt(squareDiv.dataset.x);
+    const ty = parseInt(squareDiv.dataset.y);
+    const target = gameState[ty][tx];
 
-    if(targetPiece && targetPiece.color === currentTurn) {
+    if (target && target.color === currentTurn) {
         if (selectedSquare) {
             selectedSquare.classList.remove('selected');
-            clearValidMoveHighlights();
+            clearMoveHighlights();
         }
-        squareDiv.classList.add('selected');    
-        selectedSquare = squareDiv;   
-        
-        currentValidMoves = getvalidMoves(targetX, targetY); 
-        highlightValidMoves(currentValidMoves);   
+        squareDiv.classList.add('selected');
+        selectedSquare    = squareDiv;
+        currentValidMoves = getvalidMoves(tx, ty);
+        highlightMoves(currentValidMoves);
+        return;
     }
-    else if (selectedSquare) {  
-        
-        // --- THIS IS THE CHANGED PART ---
-        // We use .find() instead of .some() to grab the actual move object!
-        const chosenMove = currentValidMoves.find(move => move.x === targetX && move.y === targetY);
-        
-        // If chosenMove exists, it was a legal move!
+
+    if (selectedSquare) {
+        const chosenMove = currentValidMoves.find(m => m.x === tx && m.y === ty);
+
         if (chosenMove) {
             const fromX = parseInt(selectedSquare.dataset.x);
             const fromY = parseInt(selectedSquare.dataset.y);
-            
-            // Capture whether the move resulted in a promotion
-            const isPromoting = movePiece(fromX, fromY, targetX, targetY, chosenMove);
 
-            selectedSquare.classList.remove('selected');    
-            selectedSquare = null;
-            clearValidMoveHighlights();
+            // ── Record SAN before the board changes ──────────────────────────
+            // For pawn promotion we won't know the piece yet; handled in completePromotion
+            const isPawnPromo = gameState[fromY][fromX]?.type === 'pawn' && (ty === 0 || ty === 7);
+            if (!isPawnPromo) recordMove(fromX, fromY, tx, ty, chosenMove);
+            else { pendingWhiteSAN = { fromX, fromY, tx, ty, chosenMove }; }
+
+            const isPromoting = movePiece(fromX, fromY, tx, ty, chosenMove);
+
+            selectedSquare.classList.remove('selected');
+            selectedSquare    = null;
+            clearMoveHighlights();
             currentValidMoves = [];
-            
-            renderBoard(); // Render the pawn landing on the final square
-            
+
+            highlightLastMove(fromX, fromY, tx, ty);
+            renderBoard();
+
             if (isPromoting) {
-                showPromotionModal(targetX, targetY, currentTurn);
+                // currentTurn hasn't flipped yet – pass the color that moved
+                showPromotionModal(tx, ty, currentTurn === 'white' ? 'white' : 'black');
             } else {
-                if (typeof updateCheckStatus === 'function') updateCheckStatus();
+                recordPosition();
+                updateCheckStatus();
                 checkGameOver();
-                
-                // --- LET THE AI PLAY ---
+
                 if (currentTurn === 'black') {
-                    // Small delay so the board updates visually before the AI freezes the screen to think
-                    setTimeout(() => {
-                        makeAIMove();
-                        renderBoard();
-                        updateCheckStatus();
-                        checkGameOver();
-                    }, 50); 
+                    setTimeout(runAI, 50);
                 }
             }
-        }
-        else {
-            selectedSquare.classList.remove('selected');    
-            selectedSquare = null;
-            clearValidMoveHighlights();
+        } else {
+            selectedSquare.classList.remove('selected');
+            selectedSquare    = null;
+            clearMoveHighlights();
             currentValidMoves = [];
         }
     }
 }
 
-function highlightValidMoves(moves) {
-    for(let move of moves) {    
-        // FIX 2: Spelled "document" correctly
-        const squareDiv = document.querySelector(`.square[data-x="${move.x}"][data-y="${move.y}"]`);     
-        if(squareDiv) squareDiv.classList.add('valid-move');
-    }   
+function runAI() {
+    makeAIMove();
+    const last = lastMove;
+    renderBoard();
+    highlightLastMove(last.fromX, last.fromY, last.toX, last.toY);
+    updateCheckStatus();
+    checkGameOver();
 }
 
-function clearValidMoveHighlights() {
-    const highlightedSquares = document.querySelectorAll('.square.valid-move');
-    highlightedSquares.forEach(square => square.classList.remove('valid-move'));
+// ─── HIGHLIGHT HELPERS ────────────────────────────────────────────────────────
+function highlightMoves(moves) {
+    for (const m of moves) {
+        const sq = document.querySelector(`.square[data-x="${m.x}"][data-y="${m.y}"]`);
+        if (sq) sq.classList.add(gameState[m.y][m.x] ? 'capture-hint' : 'move-hint');
+    }
+}
+function clearMoveHighlights() {
+    document.querySelectorAll('.square.move-hint, .square.capture-hint')
+            .forEach(sq => sq.classList.remove('move-hint', 'capture-hint'));
+}
+function highlightLastMove(fromX, fromY, toX, toY) {
+    document.querySelectorAll('.square.last-move').forEach(sq => sq.classList.remove('last-move'));
+    const from = document.querySelector(`.square[data-x="${fromX}"][data-y="${fromY}"]`);
+    const to   = document.querySelector(`.square[data-x="${toX}"][data-y="${toY}"]`);
+    if (from) from.classList.add('last-move');
+    if (to)   to.classList.add('last-move');
 }
 
+// ─── CHECK STATUS ─────────────────────────────────────────────────────────────
 function updateCheckStatus() {
-    // Remove previous check highlights
-    const checkedSquares = document.querySelectorAll('.square.in-check');
-    checkedSquares.forEach(square => square.classList.remove('in-check'));
-    
-    // Find current player's king
-    const kingPos = findKing(currentTurn);
-    if (!kingPos) return; // King not found (shouldn't happen)
-    
-    // Get enemy color
-    const enemyColor = currentTurn === 'white' ? 'black' : 'white';
-    
-    // Check if king is under attack
-    const kingInCheck = isSquareAttacked(kingPos.x, kingPos.y, enemyColor);
-    
-    if (kingInCheck) {
-        // Highlight the king's square in red
-        const kingSquare = document.querySelector(`.square[data-x="${kingPos.x}"][data-y="${kingPos.y}"]`);
-        if (kingSquare) {
-            kingSquare.classList.add('in-check');
-        }
+    document.querySelectorAll('.square.in-check').forEach(sq => sq.classList.remove('in-check'));
+    const kp = findKing(currentTurn);
+    if (!kp) return;
+    const enemy = currentTurn === 'white' ? 'black' : 'white';
+    if (isSquareAttacked(kp.x, kp.y, enemy)) {
+        const sq = document.querySelector(`.square[data-x="${kp.x}"][data-y="${kp.y}"]`);
+        if (sq) sq.classList.add('in-check');
     }
 }
 
+// ─── MODALS ───────────────────────────────────────────────────────────────────
 function showGameOverModal(message) {
-    const modal = document.getElementById('gameOverModal');
-    const messageElement = document.getElementById('modalMessage');
-    
-    // Set the winning/drawing text
-    messageElement.textContent = message;
-    
-    // Unhide the modal
-    modal.classList.remove('hidden');
+    document.getElementById('modalMessage').textContent = message;
+    document.getElementById('gameOverModal').classList.remove('hidden');
 }
 
 function showPromotionModal(x, y, color) {
     promoTargetX = x;
     promoTargetY = y;
-    
-    // The image paths differ based on your folder structure, usually 'pieces/queen-w.png'
-    const suffix = color === 'white' ? 'w' : 'b';
-    
-    document.getElementById('promo-queen').src = `pieces/queen-${suffix}.png`;
-    document.getElementById('promo-rook').src = `pieces/rook-${suffix}.png`;
-    document.getElementById('promo-bishop').src = `pieces/bishop-${suffix}.png`;
-    document.getElementById('promo-knight').src = `pieces/knight-${suffix}.png`;
-
+    const s = color === 'white' ? 'w' : 'b';
+    document.getElementById('promo-queen').src  = `pieces/queen-${s}.png`;
+    document.getElementById('promo-rook').src   = `pieces/rook-${s}.png`;
+    document.getElementById('promo-bishop').src = `pieces/bishop-${s}.png`;
+    document.getElementById('promo-knight').src = `pieces/knight-${s}.png`;
     document.getElementById('promotionModal').classList.remove('hidden');
 }
 
 function completePromotion(pieceType) {
+    // Record the SAN now that we know the promotion piece
+    if (pendingWhiteSAN) {
+        const p = pendingWhiteSAN;
+        recordMove(p.fromX, p.fromY, p.tx, p.ty, p.chosenMove, pieceType);
+        pendingWhiteSAN = null;
+    }
+
     gameState[promoTargetY][promoTargetX].type = pieceType;
     document.getElementById('promotionModal').classList.add('hidden');
+
     currentTurn = currentTurn === 'white' ? 'black' : 'white';
-    
+
     renderBoard();
-    if (typeof updateCheckStatus === 'function') updateCheckStatus();
+    recordPosition();
+    updateCheckStatus();
     checkGameOver();
 
-    // --- ADD THIS BLOCK SO THE AI MOVES AFTER YOU PROMOTE! ---
     if (currentTurn === 'black') {
-        setTimeout(() => {
-            makeAIMove();
-            renderBoard();
-            updateCheckStatus();
-            checkGameOver();
-        }, 50); 
+        setTimeout(runAI, 50);
     }
 }
