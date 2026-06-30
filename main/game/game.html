@@ -22,9 +22,9 @@
         <aside class="sidebar">
 
             <!-- Player tags -->
-            <div class="player-tag player-black">
-                <div class="player-avatar">♟</div>
-                <span class="player-name">Engine (Black)</span>
+            <div class="player-tag player-top">
+                <div class="player-avatar" id="topAvatar">♟</div>
+                <span class="player-name" id="topName">Engine (Black)</span>
             </div>
 
             <!-- Move history panel -->
@@ -46,9 +46,9 @@
             </div>
 
             <!-- Player tags -->
-            <div class="player-tag player-white">
-                <div class="player-avatar">♙</div>
-                <span class="player-name">You (White)</span>
+            <div class="player-tag player-bottom">
+                <div class="player-avatar" id="bottomAvatar">♙</div>
+                <span class="player-name" id="bottomName">You (White)</span>
             </div>
 
             <!-- Buttons -->
@@ -58,6 +58,32 @@
             </div>
 
         </aside>
+    </div>
+
+    <!-- ── SETUP MODAL ───────────────────────────────────────────────── -->
+    <div id="setupModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h2>New Game</h2>
+
+            <p style="margin-bottom:10px;">Mode</p>
+            <div class="modal-buttons" style="margin-bottom:24px;">
+                <button id="modeHumanBtn" class="button confirm setup-choice selected" data-mode="human">vs AI</button>
+                <button id="modeAiBtn"    class="button cancel setup-choice"  data-mode="ai">AI vs AI</button>
+            </div>
+
+            <div id="colorChoiceRow">
+                <p style="margin-bottom:10px;">Play as</p>
+                <div class="modal-buttons" style="margin-bottom:24px;">
+                    <button id="colorWhiteBtn"  class="button confirm setup-choice selected" data-color="white">White</button>
+                    <button id="colorBlackBtn"  class="button cancel setup-choice"  data-color="black">Black</button>
+                    <button id="colorRandomBtn" class="button cancel setup-choice"  data-color="random">Random</button>
+                </div>
+            </div>
+
+            <div class="modal-buttons">
+                <button id="beginGameButton" class="button confirm">Begin</button>
+            </div>
+        </div>
     </div>
 
     <!-- ── GAME OVER MODAL ───────────────────────────────────────────── -->

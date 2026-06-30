@@ -1,31 +1,39 @@
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-let isGameRunning   = false;
-let selectedSquare  = null;
+let gameActive       = false;  // true while a game is in progress
+let aiThinking        = false; // true while the AI is searching for a move
+let selectedSquare   = null;
 let currentValidMoves = [];
-let promoTargetX    = null;
-let promoTargetY    = null;
+let promoTargetX     = null;
+let promoTargetY     = null;
+let pendingPromo      = null;  // { fromX, fromY, tx, ty, chosenMove, color, sanBase }
+
+// ─── GAME SETUP STATE ──────────────────────────────────────────────────────────
+let gameMode    = 'human'; // 'human' (vs AI) | 'ai' (AI vs AI)
+let playerColor = 'white'; // the human's color (orientation reference in AI vs AI too)
+let isFlipped   = false;   // true => board is drawn from Black's perspective
+
+let selectedMode  = 'human';
+let selectedColor = 'white';
+
+const AI_TIME_HUMAN = 1500;  // ms search budget when playing against a human
+const AI_DEPTH_HUMAN = 6;
+const AI_TIME_SELFPLAY = 500; // ms search budget for AI vs AI (keeps it watchable)
+const AI_DEPTH_SELFPLAY = 5;
 
 // ─── MOVE HISTORY ─────────────────────────────────────────────────────────────
 // Each entry: { white: 'e4', black: 'e5' | null }
 let moveHistory = [];
-let pendingWhiteSAN = null;  // white's SAN waits here until black replies
 
-// Called before movePiece() so the board is still in pre-move state
-function recordMove(fromX, fromY, toX, toY, details, promoType = null) {
-    const san = moveToSAN(fromX, fromY, toX, toY, details, promoType);
-
-    if (currentTurn === 'white') {
-        // White just moved – open a new row
+function appendHistoryMove(color, san) {
+    if (color === 'white') {
         moveHistory.push({ white: san, black: null });
-    } else {
-        // Black just moved – close the current row
-        if (moveHistory.length === 0) moveHistory.push({ white: '…', black: null });
+    } else if (moveHistory.length > 0 && moveHistory[moveHistory.length - 1].black === null) {
         moveHistory[moveHistory.length - 1].black = san;
+    } else {
+        moveHistory.push({ white: null, black: san });
     }
-
     renderMoveHistory();
-    return san;
 }
 
 function renderMoveHistory() {
@@ -55,18 +63,30 @@ function renderMoveHistory() {
         panel.appendChild(tr);
     });
 
-    // Auto-scroll to latest move
-    panel.scrollTop = panel.scrollHeight;
+    const scroller = panel.closest('.history-scroll');
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+}
+
+// ─── BOARD ORIENTATION HELPERS ─────────────────────────────────────────────────
+function screenX(x) { return isFlipped ? 7 - x : x; }
+function screenY(y) { return isFlipped ? 7 - y : y; }
+
+function placeAt(el, x, y) {
+    el.style.left = `${screenX(x) * 12.5}%`;
+    el.style.top  = `${screenY(y) * 12.5}%`;
 }
 
 // ─── DOM SETUP ────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    const start      = document.getElementById('startButton');
-    const exit       = document.getElementById('exitButton');
-    const board      = document.getElementById('chessboard');
-    const restartBtn = document.getElementById('restartButton');
-    const closeBtn   = document.getElementById('closeModalButton');
-    const modal      = document.getElementById('gameOverModal');
+    const start       = document.getElementById('startButton');
+    const exit        = document.getElementById('exitButton');
+    const board       = document.getElementById('chessboard');
+    const restartBtn  = document.getElementById('restartButton');
+    const closeBtn    = document.getElementById('closeModalButton');
+    const modal       = document.getElementById('gameOverModal');
+    const setupModal  = document.getElementById('setupModal');
+    const beginBtn    = document.getElementById('beginGameButton');
+    const colorRow    = document.getElementById('colorChoiceRow');
 
     if (board) {
         board.addEventListener('click', e => {
@@ -75,83 +95,162 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (start && board) {
-        start.addEventListener('click', async () => {
-            if (isGameRunning) return;
+    if (start && setupModal) {
+        start.addEventListener('click', () => {
+            if (gameActive) return;
+            setupModal.classList.remove('hidden');
+        });
+    }
+
+    document.querySelectorAll('.setup-choice[data-mode]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            selectedMode = btn.dataset.mode;
+            document.querySelectorAll('.setup-choice[data-mode]').forEach(b => b.classList.toggle('selected', b === btn));
+            if (colorRow) colorRow.style.display = selectedMode === 'ai' ? 'none' : '';
+        });
+    });
+
+    document.querySelectorAll('.setup-choice[data-color]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            selectedColor = btn.dataset.color;
+            document.querySelectorAll('.setup-choice[data-color]').forEach(b => b.classList.toggle('selected', b === btn));
+        });
+    });
+
+    if (beginBtn) {
+        beginBtn.addEventListener('click', async () => {
+            gameMode = selectedMode;
+            if (gameMode === 'human') {
+                playerColor = selectedColor === 'random'
+                    ? (Math.random() < 0.5 ? 'white' : 'black')
+                    : selectedColor;
+            } else {
+                playerColor = 'white'; // orientation only; no human side in AI vs AI
+            }
+            isFlipped = playerColor === 'black';
+
+            setupModal.classList.add('hidden');
             board.style.display = 'grid';
             await startGame();
         });
     }
 
-    if (exit)       exit.addEventListener('click', () => { location.href = '../site.html'; });
+    if (exit)       exit.addEventListener('click', () => { gameActive = false; location.href = '../site.html'; });
     if (restartBtn) restartBtn.addEventListener('click', () => location.reload());
     if (closeBtn)   closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
 
     document.querySelectorAll('.promo-piece').forEach(img => {
         img.addEventListener('click', e => completePromotion(e.target.getAttribute('data-type')));
     });
+
+    updatePlayerTags();
 });
+
+// ─── PLAYER TAGS ────────────────────────────────────────────────────────────────
+function updatePlayerTags() {
+    const topName    = document.getElementById('topName');
+    const bottomName = document.getElementById('bottomName');
+    const topAvatar  = document.getElementById('topAvatar');
+    const bottomAvatar = document.getElementById('bottomAvatar');
+    if (!topName || !bottomName) return;
+
+    // Top of the board is whichever color is NOT at the bottom.
+    const bottomColor = isFlipped ? 'black' : 'white';
+    const topColor    = isFlipped ? 'white' : 'black';
+
+    const label = (color) => {
+        if (gameMode === 'ai') return `Engine (${color === 'white' ? 'White' : 'Black'})`;
+        return color === playerColor ? `You (${color === 'white' ? 'White' : 'Black'})` : `Engine (${color === 'white' ? 'White' : 'Black'})`;
+    };
+
+    topName.textContent    = label(topColor);
+    bottomName.textContent = label(bottomColor);
+    topAvatar.textContent    = topColor === 'white' ? '♙' : '♟';
+    bottomAvatar.textContent = bottomColor === 'white' ? '♙' : '♟';
+}
 
 // ─── BOARD INIT ───────────────────────────────────────────────────────────────
 async function startGame() {
-    isGameRunning = true;
+    gameActive = true;
     const board = document.getElementById('chessboard');
     board.innerHTML = '';
+    moveHistory = [];
+    renderMoveHistory();
+    updatePlayerTags();
 
+    // 1. Draw the Background Squares
     for (let y = 0; y < 8; y++) {
         for (let x = 0; x < 8; x++) {
-            const sq = document.createElement('div');
-            sq.className = 'square ' + ((x + y) % 2 === 0 ? 'light' : 'dark');
-            sq.dataset.x = x;
-            sq.dataset.y = y;
-
-            if (x === 0) {
-                const lbl = document.createElement('span');
-                lbl.className = 'coord-rank';
-                lbl.textContent = 8 - y;
-                sq.appendChild(lbl);
-            }
-            if (y === 7) {
-                const lbl = document.createElement('span');
-                lbl.className = 'coord-file';
-                lbl.textContent = 'abcdefgh'[x];
-                sq.appendChild(lbl);
-            }
-
-            const piece = gameState[y][x];
-            if (piece) {
-                const pe = document.createElement('div');
-                pe.className = `piece piece-${piece.color} ${piece.type}`;
-                sq.appendChild(pe);
-            }
-
-            board.appendChild(sq);
-            await sleep(20);
+            let square = document.createElement('div');
+            square.className = 'square ' + ((x + y) % 2 === 0 ? 'light' : 'dark');
+            square.dataset.x = x;
+            square.dataset.y = y;
+            placeAt(square, x, y);
+            board.appendChild(square);
         }
     }
 
-    recordPosition();
+    // 2. Draw the Floating Pieces
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const piece = gameState[y][x];
+            if (piece) {
+                const pieceElement = document.createElement('div');
+                pieceElement.id = piece.domId;
+                pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
+                placeAt(pieceElement, x, y);
+                board.appendChild(pieceElement);
+            }
+        }
+    }
+
     updateCheckStatus();
-    isGameRunning = false;
+
+    // Kick off the AI if it has to move first (AI vs AI, or human chose Black).
+    if (gameMode === 'ai' || (gameMode === 'human' && currentTurn !== playerColor)) {
+        setTimeout(playAIMove, 300);
+    }
 }
 
-function renderBoard() {
+async function renderBoard() {
+    const board = document.getElementById('chessboard');
+    const activeIds = new Set();
+
+    // 1. Slide existing pieces to their new coordinates
     for (let y = 0; y < 8; y++) {
         for (let x = 0; x < 8; x++) {
-            const sq = document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`);
-            sq.querySelectorAll('.piece').forEach(el => el.remove());
             const piece = gameState[y][x];
             if (piece) {
-                const pe = document.createElement('div');
-                pe.className = `piece piece-${piece.color} ${piece.type}`;
-                sq.appendChild(pe);
+                activeIds.add(piece.domId);
+                let pieceElement = document.getElementById(piece.domId);
+
+                // If the piece is new (like a promoted Queen), create it!
+                if (!pieceElement) {
+                    pieceElement = document.createElement('div');
+                    pieceElement.id = piece.domId;
+                    board.appendChild(pieceElement);
+                }
+
+                // Update class (handles promotion image swap) and Slide!
+                pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
+                placeAt(pieceElement, x, y);
             }
         }
     }
+
+    // 2. Delete captured pieces from the screen
+    const currentDOMPieces = board.querySelectorAll('.piece');
+    currentDOMPieces.forEach(domPiece => {
+        if (!activeIds.has(domPiece.id)) domPiece.remove();
+    });
 }
 
 // ─── CLICK HANDLER ────────────────────────────────────────────────────────────
 function handleSquareClick(squareDiv) {
+    if (!gameActive || aiThinking) return;
+    if (gameMode === 'ai') return;                 // no human input in AI vs AI
+    if (currentTurn !== playerColor) return;        // not your turn
+
     const tx = parseInt(squareDiv.dataset.x);
     const ty = parseInt(squareDiv.dataset.y);
     const target = gameState[ty][tx];
@@ -174,12 +273,16 @@ function handleSquareClick(squareDiv) {
         if (chosenMove) {
             const fromX = parseInt(selectedSquare.dataset.x);
             const fromY = parseInt(selectedSquare.dataset.y);
+            const movingColor = gameState[fromY][fromX].color;
 
-            // ── Record SAN before the board changes ──────────────────────────
-            // For pawn promotion we won't know the piece yet; handled in completePromotion
             const isPawnPromo = gameState[fromY][fromX]?.type === 'pawn' && (ty === 0 || ty === 7);
-            if (!isPawnPromo) recordMove(fromX, fromY, tx, ty, chosenMove);
-            else { pendingWhiteSAN = { fromX, fromY, tx, ty, chosenMove }; }
+
+            // SAN must be computed BEFORE the board changes (moveToSAN inspects pre-move state).
+            // For promotions the final piece type is unknown yet, so the suffix is filled in later.
+            const sanBase = moveToSAN(fromX, fromY, tx, ty, chosenMove, null);
+            if (isPawnPromo) {
+                pendingPromo = { fromX, fromY, tx, ty, chosenMove, color: movingColor, sanBase };
+            }
 
             const isPromoting = movePiece(fromX, fromY, tx, ty, chosenMove);
 
@@ -192,15 +295,15 @@ function handleSquareClick(squareDiv) {
             renderBoard();
 
             if (isPromoting) {
-                // currentTurn hasn't flipped yet – pass the color that moved
-                showPromotionModal(tx, ty, currentTurn === 'white' ? 'white' : 'black');
+                showPromotionModal(tx, ty, movingColor);
             } else {
+                appendHistoryMove(movingColor, sanBase + getCheckSuffix(currentTurn));
                 recordPosition();
                 updateCheckStatus();
-                checkGameOver();
-
-                if (currentTurn === 'black') {
-                    setTimeout(runAI, 50);
+                const over = checkGameOver();
+                if (over) { gameActive = false; }
+                else if (currentTurn !== playerColor) {
+                    setTimeout(playAIMove, 300);
                 }
             }
         } else {
@@ -212,13 +315,38 @@ function handleSquareClick(squareDiv) {
     }
 }
 
-function runAI() {
-    makeAIMove();
-    const last = lastMove;
+// ─── AI TURN(S) ─────────────────────────────────────────────────────────────────
+function aiTimeBudget() { return gameMode === 'ai' ? AI_TIME_SELFPLAY : AI_TIME_HUMAN; }
+function aiDepth()      { return gameMode === 'ai' ? AI_DEPTH_SELFPLAY : AI_DEPTH_HUMAN; }
+
+async function playAIMove() {
+    if (!gameActive || aiThinking) return;
+    aiThinking = true;
+
+    const color = currentTurn;
+    const result = makeAIMove(color, aiTimeBudget(), aiDepth());
+
+    aiThinking = false;
+
+    if (!result) {
+        gameActive = false;
+        checkGameOver();
+        return;
+    }
+
+    appendHistoryMove(result.color, result.san);
     renderBoard();
-    highlightLastMove(last.fromX, last.fromY, last.toX, last.toY);
+    highlightLastMove(result.move.fromX, result.move.fromY, result.move.toX, result.move.toY);
     updateCheckStatus();
-    checkGameOver();
+
+    const over = checkGameOver();
+    if (over) { gameActive = false; return; }
+
+    // Keep going if it's still an AI's turn (AI vs AI, or AI just moved and it's AI's turn again
+    // because the human is the opposite color).
+    if (gameMode === 'ai' || currentTurn !== playerColor) {
+        setTimeout(playAIMove, gameMode === 'ai' ? 400 : 300);
+    }
 }
 
 // ─── HIGHLIGHT HELPERS ────────────────────────────────────────────────────────
@@ -270,24 +398,25 @@ function showPromotionModal(x, y, color) {
 }
 
 function completePromotion(pieceType) {
-    // Record the SAN now that we know the promotion piece
-    if (pendingWhiteSAN) {
-        const p = pendingWhiteSAN;
-        recordMove(p.fromX, p.fromY, p.tx, p.ty, p.chosenMove, pieceType);
-        pendingWhiteSAN = null;
-    }
+    const PROMO_LETTER = { queen: 'Q', rook: 'R', bishop: 'B', knight: 'N' };
 
     gameState[promoTargetY][promoTargetX].type = pieceType;
     document.getElementById('promotionModal').classList.add('hidden');
-
     currentTurn = currentTurn === 'white' ? 'black' : 'white';
+
+    if (pendingPromo) {
+        const san = pendingPromo.sanBase + '=' + PROMO_LETTER[pieceType] + getCheckSuffix(currentTurn);
+        appendHistoryMove(pendingPromo.color, san);
+        pendingPromo = null;
+    }
 
     renderBoard();
     recordPosition();
     updateCheckStatus();
-    checkGameOver();
 
-    if (currentTurn === 'black') {
-        setTimeout(runAI, 50);
+    const over = checkGameOver();
+    if (over) { gameActive = false; return; }
+    if (currentTurn !== playerColor) {
+        setTimeout(playAIMove, 300);
     }
 }

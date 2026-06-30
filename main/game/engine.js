@@ -1,8 +1,10 @@
-class ChessPiece {
+class ChessPiece {      
     constructor(type, color) {
         this.type = type;
         this.color = color;
         this.hasMoved = false;
+        // Generate a random ID so the UI can track this specific piece for animations!
+        this.domId = 'piece-' + Math.random().toString(36).substr(2, 9);
     }
 }
 
@@ -43,6 +45,12 @@ function getBoardKey() {
             key += p ? `${p.color[0]}${p.type[0]}${p.hasMoved?1:0}` : '.';
         }
         key += '/';
+    }
+    // En passant target must be part of the position, otherwise two positions
+    // that differ only in en-passant availability collapse to the same key.
+    if (lastMove && lastMove.piece && lastMove.piece.type === 'pawn'
+        && Math.abs(lastMove.fromY - lastMove.toY) === 2) {
+        key += `ep${lastMove.toX}`;
     }
     return key;
 }
@@ -257,52 +265,77 @@ function findKing(color) {
     return null;
 }
 
+// Make `move` on the board, check whether `(x,y)`'s side is left in check, then
+// restore. Shared by getvalidMoves() and the AI's capture-only generator so the
+// (expensive) full-board king-safety check is only ever done once per candidate move.
+function isMoveLegal(x, y, move) {
+    const piece = gameState[y][x];
+
+    const captured = gameState[move.y][move.x];
+    let epCaptured = null;
+    if (move.isEnPassant) { epCaptured = gameState[move.captureY][move.captureX]; gameState[move.captureY][move.captureX] = null; }
+
+    gameState[move.y][move.x] = piece;
+    gameState[y][x] = null;
+
+    const kp = findKing(piece.color);
+    const safe = kp && !isSquareAttacked(kp.x, kp.y, piece.color === 'white' ? 'black' : 'white');
+
+    // Restore
+    gameState[y][x] = piece;
+    gameState[move.y][move.x] = captured;
+    if (move.isEnPassant) gameState[move.captureY][move.captureX] = epCaptured;
+
+    return safe;
+}
+
 function getvalidMoves(x, y) {
     const piece = gameState[y][x];
     if (!piece) return [];
+    return getPseudoLegalMoves(x, y).filter(move => isMoveLegal(x, y, move));
+}
 
-    const validMoves = [];
-    for (const move of getPseudoLegalMoves(x, y)) {
-        // Save
-        const captured = gameState[move.y][move.x];
-        let epCaptured = null;
-        if (move.isEnPassant) { epCaptured = gameState[move.captureY][move.captureX]; gameState[move.captureY][move.captureX] = null; }
+// ─── CHECK / CHECKMATE SUFFIX (for SAN, based on the CURRENT real board) ─────
+// colorToMove: the side that must move next, i.e. the side that might be in check.
+function getCheckSuffix(colorToMove) {
+    const kp = findKing(colorToMove);
+    if (!kp) return '';
+    const enemy = colorToMove === 'white' ? 'black' : 'white';
+    if (!isSquareAttacked(kp.x, kp.y, enemy)) return '';
 
-        gameState[move.y][move.x] = piece;
-        gameState[y][x] = null;
-
-        const kp = findKing(piece.color);
-        const safe = kp && !isSquareAttacked(kp.x, kp.y, piece.color === 'white' ? 'black' : 'white');
-
-        // Restore
-        gameState[y][x] = piece;
-        gameState[move.y][move.x] = captured;
-        if (move.isEnPassant) gameState[move.captureY][move.captureX] = epCaptured;
-
-        if (safe) validMoves.push(move);
+    let hasMove = false;
+    outer: for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            if (p && p.color === colorToMove && getvalidMoves(x, y).length > 0) {
+                hasMove = true;
+                break outer;
+            }
+        }
     }
-    return validMoves;
+    return hasMove ? '+' : '#';
 }
 
 // ─── GAME OVER CHECK (checkmate, stalemate, draws) ───────────────────────────
+// Returns true if the game has ended (and schedules the modal), false otherwise.
 function checkGameOver() {
     // 1. Threefold repetition
     const repCount = positionHistory[getBoardKey()] || 0;
     if (repCount >= 3) {
         setTimeout(() => showGameOverModal("Draw by Threefold Repetition!"), 100);
-        return;
+        return true;
     }
 
     // 2. 50-move rule
     if (halfMoveClock >= 100) {  // 100 half-moves = 50 full moves
         setTimeout(() => showGameOverModal("Draw by 50-Move Rule!"), 100);
-        return;
+        return true;
     }
 
     // 3. Insufficient material
     if (isInsufficientMaterial()) {
         setTimeout(() => showGameOverModal("Draw by Insufficient Material!"), 100);
-        return;
+        return true;
     }
 
     // 4. Checkmate / Stalemate
@@ -316,7 +349,7 @@ function checkGameOver() {
             }
         }
     }
-    if (hasAnyMove) return;
+    if (hasAnyMove) return false;
 
     const kp = findKing(currentTurn);
     const enemy = currentTurn === 'white' ? 'black' : 'white';
@@ -327,4 +360,5 @@ function checkGameOver() {
     } else {
         setTimeout(() => showGameOverModal("Stalemate! It's a Draw!"), 100);
     }
+    return true;
 }

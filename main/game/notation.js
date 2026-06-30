@@ -67,55 +67,10 @@ function moveToSAN(fromX, fromY, toX, toY, moveDetails = null, promoType = null)
     const promoSuffix = promoType ? '=' + PIECE_LETTER[promoType].toUpperCase() : '';
 
     // ── Assemble base notation ────────────────────────────────────────────────
-    let san = letter + disambig + pawnFile + (isCapture ? 'x' : '') + toFile + toRank + promoSuffix;
-
-    // ── Check / Checkmate suffix ──────────────────────────────────────────────
-    // Simulate the move to see if opponent's king ends up in check/mate
-    const capturedPiece = gameState[toY][toX];
-    let epCaptured = null;
-    if (moveDetails && moveDetails.isEnPassant) {
-        epCaptured = gameState[moveDetails.captureY][moveDetails.captureX];
-        gameState[moveDetails.captureY][moveDetails.captureX] = null;
-    }
-    if (moveDetails && moveDetails.isCastle) {
-        const rook = gameState[fromY][moveDetails.rookFromX];
-        gameState[fromY][moveDetails.rookToX] = rook;
-        gameState[fromY][moveDetails.rookFromX] = null;
-    }
-    gameState[toY][toX] = piece;
-    gameState[fromY][fromX] = null;
-
-    const enemyColor = piece.color === 'white' ? 'black' : 'white';
-    const enemyKing  = findKing(enemyColor);
-    if (enemyKing) {
-        const inCheck = isSquareAttacked(enemyKing.x, enemyKing.y, piece.color);
-        if (inCheck) {
-            // Is it checkmate? (no legal moves for enemy)
-            let hasMate = true;
-            outer: for (let y = 0; y < 8; y++) {
-                for (let x = 0; x < 8; x++) {
-                    const p = gameState[y][x];
-                    if (p && p.color === enemyColor && getvalidMoves(x, y).length > 0) {
-                        hasMate = false;
-                        break outer;
-                    }
-                }
-            }
-            san += hasMate ? '#' : '+';
-        }
-    }
-
-    // Restore the board
-    gameState[fromY][fromX] = piece;
-    gameState[toY][toX]     = capturedPiece;
-    if (moveDetails && moveDetails.isEnPassant) {
-        gameState[moveDetails.captureY][moveDetails.captureX] = epCaptured;
-    }
-    if (moveDetails && moveDetails.isCastle) {
-        const rook = gameState[fromY][moveDetails.rookToX];
-        gameState[fromY][moveDetails.rookFromX] = rook;
-        gameState[fromY][moveDetails.rookToX]   = null;
-    }
-
-    return san;
+    // NOTE: this does NOT include the trailing +/# check/checkmate marker.
+    // Call this BEFORE the move is applied to the real board, then append
+    // getCheckSuffix(<side to move next>) AFTER the move (and any promotion)
+    // has actually been applied — that avoids simulating a fake "pawn" check
+    // when the moving piece is about to be promoted to something else.
+    return letter + disambig + pawnFile + (isCapture ? 'x' : '') + toFile + toRank + promoSuffix;
 }
