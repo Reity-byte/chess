@@ -8,6 +8,7 @@
     <script src="engine.js"   defer></script>
     <script src="ai.js"       defer></script>
     <script src="notation.js" defer></script>
+    <script src="sound.js" defer></script>
     <script src="game-script.js" defer></script>
 </head>
 <body class="game-body">
@@ -55,6 +56,8 @@
             <div class="game-buttons">
                 <button id="startButton"  class="button confirm">Start</button>
                 <button id="exitButton"   class="button cancel">Exit</button>
+                <button id="soundToggleButton" class="button cancel sound-toggle" aria-label="Mute sound">🔊</button>
+                <button id="pgnButton"     class="button cancel">Download PGN</button>
             </div>
 
         </aside>
@@ -80,6 +83,16 @@
                 </div>
             </div>
 
+            <div id="difficultyRow">
+                <p style="margin-bottom:10px;">Difficulty</p>
+                <div class="modal-buttons" style="margin-bottom:24px;">
+                    <button class="button cancel setup-choice"          data-difficulty="beginner">Beginner</button>
+                    <button class="button cancel setup-choice selected" data-difficulty="intermediate">Intermediate</button>
+                    <button class="button cancel setup-choice"          data-difficulty="expert">Expert</button>
+                    <button class="button cancel setup-choice"          data-difficulty="master">Master</button>
+                </div>
+            </div>
+
             <div class="modal-buttons">
                 <button id="beginGameButton" class="button confirm">Begin</button>
             </div>
@@ -92,6 +105,8 @@
             <h2 id="modalMessage">Game Over!</h2>
             <div class="modal-buttons">
                 <button id="restartButton"   class="button confirm">Play Again</button>
+                <button id="reportButton"    class="button cancel">View Game Report</button>
+                <button id="pgnButtonModal"  class="button cancel">Download PGN</button>
                 <button id="closeModalButton" class="button cancel">Close</button>
             </div>
         </div>
@@ -109,6 +124,7 @@
             </div>
         </div>
     </div>
+
 
 </body>
 </html>

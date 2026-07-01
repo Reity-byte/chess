@@ -7,6 +7,7 @@ let currentValidMoves = [];
 let promoTargetX     = null;
 let promoTargetY     = null;
 let pendingPromo      = null;  // { fromX, fromY, tx, ty, chosenMove, color, sanBase }
+let gameResult        = '*';   // PGN result token, set by showGameOverModal from its message
 
 // ─── GAME SETUP STATE ──────────────────────────────────────────────────────────
 let gameMode    = 'human'; // 'human' (vs AI) | 'ai' (AI vs AI)
@@ -16,10 +17,19 @@ let isFlipped   = false;   // true => board is drawn from Black's perspective
 let selectedMode  = 'human';
 let selectedColor = 'white';
 
+// Difficulty controls both search depth and eval noise (random centipawn jitter
+// applied once at the root move choice — see ai.js findBestMove). Noise makes
+// weaker levels feel like human mistakes instead of just shallow, predictable play.
+const DIFFICULTY = {
+    beginner:     { maxDepth: 1, evalNoise: 80 },
+    intermediate: { maxDepth: 2, evalNoise: 30 },
+    expert:       { maxDepth: 4, evalNoise: 10 },
+    master:       { maxDepth: 6, evalNoise: 0  },
+};
+let selectedDifficulty = 'intermediate';
+
 const AI_TIME_HUMAN = 1500;  // ms search budget when playing against a human
-const AI_DEPTH_HUMAN = 6;
 const AI_TIME_SELFPLAY = 500; // ms search budget for AI vs AI (keeps it watchable)
-const AI_DEPTH_SELFPLAY = 5;
 
 // ─── MOVE HISTORY ─────────────────────────────────────────────────────────────
 // Each entry: { white: 'e4', black: 'e5' | null }
@@ -82,6 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const exit        = document.getElementById('exitButton');
     const board       = document.getElementById('chessboard');
     const restartBtn  = document.getElementById('restartButton');
+    const reportBtn   = document.getElementById('reportButton');
     const closeBtn    = document.getElementById('closeModalButton');
     const modal       = document.getElementById('gameOverModal');
     const setupModal  = document.getElementById('setupModal');
@@ -102,6 +113,25 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Landing page links here with ?mode=human|ai (and optionally ?difficulty=...)
+    // to preselect the setup modal and open it immediately instead of requiring
+    // an extra click.
+    const params = new URLSearchParams(location.search);
+    const requestedMode = params.get('mode');
+    const requestedDifficulty = params.get('difficulty');
+    if (setupModal && (requestedMode === 'human' || requestedMode === 'ai')) {
+        selectedMode = requestedMode;
+        document.querySelectorAll('.setup-choice[data-mode]').forEach(b =>
+            b.classList.toggle('selected', b.dataset.mode === requestedMode));
+        if (colorRow) colorRow.style.display = requestedMode === 'ai' ? 'none' : '';
+        setupModal.classList.remove('hidden');
+    }
+    if (requestedDifficulty && DIFFICULTY[requestedDifficulty]) {
+        selectedDifficulty = requestedDifficulty;
+        document.querySelectorAll('.setup-choice[data-difficulty]').forEach(b =>
+            b.classList.toggle('selected', b.dataset.difficulty === requestedDifficulty));
+    }
+
     document.querySelectorAll('.setup-choice[data-mode]').forEach(btn => {
         btn.addEventListener('click', () => {
             selectedMode = btn.dataset.mode;
@@ -114,6 +144,13 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => {
             selectedColor = btn.dataset.color;
             document.querySelectorAll('.setup-choice[data-color]').forEach(b => b.classList.toggle('selected', b === btn));
+        });
+    });
+
+    document.querySelectorAll('.setup-choice[data-difficulty]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            selectedDifficulty = btn.dataset.difficulty;
+            document.querySelectorAll('.setup-choice[data-difficulty]').forEach(b => b.classList.toggle('selected', b === btn));
         });
     });
 
@@ -136,8 +173,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (exit)       exit.addEventListener('click', () => { gameActive = false; location.href = '../site.html'; });
-    if (restartBtn) restartBtn.addEventListener('click', () => location.reload());
+    if (restartBtn) restartBtn.addEventListener('click', () => {
+        modal.classList.add('hidden');
+        gameActive = false;
+        aiThinking = false;
+        selectedSquare = null;
+        currentValidMoves = [];
+        setupModal.classList.remove('hidden');
+    });
     if (closeBtn)   closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
+    if (reportBtn)  reportBtn.addEventListener('click', () => {
+        const sanMoves = [];
+        for (const row of moveHistory) {
+            if (row.white) sanMoves.push(row.white);
+            if (row.black) sanMoves.push(row.black);
+        }
+        if (sanMoves.length === 0) { alert('No moves to analyze yet!'); return; }
+        // Hand the finished game off to the dedicated review page (analysis.html)
+        // via localStorage rather than an in-page modal, so the report gets its
+        // own board + move list, matching a chess.com-style game review.
+        localStorage.setItem('chessGameForAnalysis', JSON.stringify(sanMoves));
+        location.href = 'analysis.html';
+    });
 
     document.querySelectorAll('.promo-piece').forEach(img => {
         img.addEventListener('click', e => completePromotion(e.target.getAttribute('data-type')));
@@ -169,8 +226,17 @@ function updatePlayerTags() {
     bottomAvatar.textContent = bottomColor === 'white' ? '♙' : '♟';
 }
 
+// ─── THINKING INDICATOR ────────────────────────────────────────────────────────
+function setThinkingIndicator(color, on) {
+    const topColor = isFlipped ? 'white' : 'black';
+    const tag = document.getElementById(topColor === color ? 'topName' : 'bottomName')
+                        ?.closest('.player-tag');
+    if (tag) tag.classList.toggle('thinking', on);
+}
+
 // ─── BOARD INIT ───────────────────────────────────────────────────────────────
 async function startGame() {
+    resetGame();
     gameActive = true;
     const board = document.getElementById('chessboard');
     board.innerHTML = '';
@@ -186,6 +252,22 @@ async function startGame() {
             square.dataset.x = x;
             square.dataset.y = y;
             placeAt(square, x, y);
+
+            // Rank label on the leftmost screen column; file label on the bottom screen row.
+            // screenX/screenY map logical coords to screen position, so labels flip with the board.
+            if (screenX(x) === 0) {
+                const span = document.createElement('span');
+                span.className = 'coord-rank';
+                span.textContent = String(8 - y);
+                square.appendChild(span);
+            }
+            if (screenY(y) === 7) {
+                const span = document.createElement('span');
+                span.className = 'coord-file';
+                span.textContent = FILE_NAMES[x];
+                square.appendChild(span);
+            }
+
             board.appendChild(square);
         }
     }
@@ -297,7 +379,9 @@ function handleSquareClick(squareDiv) {
             if (isPromoting) {
                 showPromotionModal(tx, ty, movingColor);
             } else {
-                appendHistoryMove(movingColor, sanBase + getCheckSuffix(currentTurn));
+                const finalSan = sanBase + getCheckSuffix(currentTurn);
+                appendHistoryMove(movingColor, finalSan);
+                playSoundForMove(finalSan);
                 recordPosition();
                 updateCheckStatus();
                 const over = checkGameOver();
@@ -317,16 +401,23 @@ function handleSquareClick(squareDiv) {
 
 // ─── AI TURN(S) ─────────────────────────────────────────────────────────────────
 function aiTimeBudget() { return gameMode === 'ai' ? AI_TIME_SELFPLAY : AI_TIME_HUMAN; }
-function aiDepth()      { return gameMode === 'ai' ? AI_DEPTH_SELFPLAY : AI_DEPTH_HUMAN; }
+function aiDepth()      { return DIFFICULTY[selectedDifficulty].maxDepth; }
+function aiEvalNoise()  { return DIFFICULTY[selectedDifficulty].evalNoise; }
 
 async function playAIMove() {
     if (!gameActive || aiThinking) return;
     aiThinking = true;
-
     const color = currentTurn;
-    const result = makeAIMove(color, aiTimeBudget(), aiDepth());
+    setThinkingIndicator(color, true);
+
+    // Yield to the browser so the thinking indicator repaints before the
+    // synchronous search blocks the main thread.
+    await sleep(0);
+
+    const result = makeAIMove(color, aiTimeBudget(), aiDepth(), aiEvalNoise());
 
     aiThinking = false;
+    setThinkingIndicator(color, false);
 
     if (!result) {
         gameActive = false;
@@ -335,6 +426,7 @@ async function playAIMove() {
     }
 
     appendHistoryMove(result.color, result.san);
+    playSoundForMove(result.san);
     renderBoard();
     highlightLastMove(result.move.fromX, result.move.fromY, result.move.toX, result.move.toY);
     updateCheckStatus();
@@ -382,6 +474,7 @@ function updateCheckStatus() {
 
 // ─── MODALS ───────────────────────────────────────────────────────────────────
 function showGameOverModal(message) {
+    playGameOverSound();
     document.getElementById('modalMessage').textContent = message;
     document.getElementById('gameOverModal').classList.remove('hidden');
 }
@@ -407,6 +500,7 @@ function completePromotion(pieceType) {
     if (pendingPromo) {
         const san = pendingPromo.sanBase + '=' + PROMO_LETTER[pieceType] + getCheckSuffix(currentTurn);
         appendHistoryMove(pendingPromo.color, san);
+        playSoundForMove(san);
         pendingPromo = null;
     }
 

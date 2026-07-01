@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Report</title>
+    <link rel="stylesheet" href="game.css">
+    <script src="engine.js"   defer></script>
+    <script src="notation.js" defer></script>
+    <script src="analysis.js" defer></script>
+    <script src="analysis-page.js" defer></script>
+</head>
+<body class="game-body">
+
+    <div class="game-layout">
+
+        <!-- Board + move caption -->
+        <div class="board-column">
+            <div id="variationBanner" class="variation-banner hidden">
+                Exploring variation — not part of the recorded game
+                <button id="backToGameButton" class="button cancel">Back to Game</button>
+            </div>
+            <div id="chessboard" class="board"></div>
+            <div id="moveCaption" class="move-caption">Loading...</div>
+        </div>
+
+        <!-- Right sidebar -->
+        <aside class="sidebar analysis-sidebar">
+
+            <div id="reportProgress" class="report-progress"></div>
+            <div id="reportAccuracy" class="report-accuracy"></div>
+            <div id="reportGraph" class="report-graph"></div>
+
+            <!-- Move list panel -->
+            <div class="history-panel">
+                <div class="history-scroll">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th class="col-num">#</th>
+                                <th class="col-move">White</th>
+                                <th class="col-move">Black</th>
+                            </tr>
+                        </thead>
+                        <tbody id="move-history-body">
+                            <!-- rows injected by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Buttons -->
+            <div class="game-buttons">
+                <button id="newGameButton" class="button confirm">New Game</button>
+                <button id="homeButton"    class="button cancel">Home</button>
+            </div>
+
+        </aside>
+    </div>
+
+</body>
+</html>

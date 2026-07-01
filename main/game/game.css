@@ -175,6 +175,26 @@
 .button:hover  { background: #6fa33e; transform: translateY(-1px); }
 .button:active { background: #5c8c32; transform: translateY(0); }
 
+.sound-toggle {
+    padding: 10px 14px;
+    font-size: 16px;
+    line-height: 1;
+    flex: 0 0 auto;
+}
+
+/* ─── THINKING INDICATOR ─────────────────────────────────────────────────────── */
+.player-tag.thinking {
+    box-shadow: 0 0 0 2px rgba(129, 182, 76, 0.55);
+}
+.player-tag.thinking .player-name::after {
+    content: ' ···';
+    animation: pulse-dots 1.2s ease-in-out infinite;
+}
+@keyframes pulse-dots {
+    0%, 100% { opacity: 0.2; }
+    50%       { opacity: 1;   }
+}
+
 /* ─── MOVE HISTORY ───────────────────────────────────────────────────────────── */
 /* Make the move tracker look like a retro terminal */
 .moves {
@@ -249,6 +269,11 @@
 .setup-choice {
     opacity: 0.55;
     transform: scale(0.97);
+}
+/* Four difficulty options need tighter padding than the 2-3 option rows to fit one line. */
+#difficultyRow .setup-choice {
+    padding: 9px 16px;
+    font-size: 13px;
 }
 .setup-choice.selected {
     opacity: 1;
@@ -390,3 +415,126 @@
 }
 .col-num  { width: 32px; }
 .col-move { width: calc(50% - 16px); }
+
+/* ─── MOVE QUALITY GLYPHS (Game Analysis Engine, analysis.html only — the live
+   game in game.html never classifies moves during play) ──────────────────── */
+.move-badge {
+    font-weight: 800;
+    margin-left: 1px;
+    cursor: help;
+}
+
+/* ─── GAME REPORT PAGE (analysis.html) ─────────────────────────────────────── */
+.board-column {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.move-caption {
+    text-align: center;
+    font-size: 15px;
+    font-weight: 700;
+    color: #c8c8c6;
+    min-height: 1.4em;
+}
+/* Colored badge overlaid on the board square a move landed on, showing its
+   category glyph at a glance — the "rating visible on the board" chess.com effect. */
+.on-board-badge {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid #1a1917;
+    transform: translate(-70%, -30%);
+    z-index: 20;
+    pointer-events: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 800;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
+.analysis-sidebar .move-san[data-ply] { cursor: pointer; }
+.analysis-sidebar .move-san.active-ply {
+    background: rgba(129,182,76,0.28) !important;
+}
+
+/* Arrow overlay showing the last move played — main line or "what if" variation. */
+.move-arrow-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 15;
+}
+
+/* ─── "WHAT IF" EXPLORATION (analysis.html) ───────────────────────────────────── */
+.variation-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: rgba(230,180,34,0.15);
+    border: 1px solid rgba(230,180,34,0.4);
+    color: #e6b422;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 8px;
+}
+.variation-banner .button {
+    padding: 5px 14px;
+    font-size: 12px;
+}
+.variation-line {
+    padding: 6px 10px;
+    background: rgba(230,180,34,0.08);
+    border-left: 3px solid #e6b422;
+    font-size: 13px;
+    line-height: 1.8;
+}
+.variation-move {
+    color: #e0c987;
+    cursor: pointer;
+    margin-right: 8px;
+}
+.variation-move:hover { color: #fff; }
+.variation-move.active-ply {
+    background: rgba(230,180,34,0.3);
+    border-radius: 4px;
+    padding: 1px 4px;
+}
+
+.report-progress {
+    color: #c8c8c6;
+    font-size: 14px;
+    margin-bottom: 12px;
+    min-height: 1.2em;
+}
+.report-accuracy {
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    margin-bottom: 14px;
+    font-size: 14px;
+    color: #c8c8c6;
+}
+.report-accuracy-side strong {
+    font-size: 22px;
+    color: #f0f0ef;
+    display: block;
+    margin-top: 4px;
+}
+.report-graph {
+    background: #1e1d1b;
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 14px;
+}
+.eval-graph-svg { width: 100%; height: 120px; display: block; cursor: pointer; }
+.eval-graph-mid { stroke: rgba(255,255,255,0.15); stroke-width: 1; }
+.eval-graph-line { fill: none; stroke: #81b64c; stroke-width: 2; }

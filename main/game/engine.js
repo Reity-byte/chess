@@ -36,21 +36,37 @@ function initializeBoard() {
 
 let gameState = initializeBoard();
 
+function resetGame() {
+    gameState = initializeBoard();
+    currentTurn = 'white';
+    lastMove = null;
+    positionHistory = {};
+    halfMoveClock = 0;
+}
+
 // ─── POSITION HASHING (for threefold repetition) ──────────────────────────────
 function getBoardKey() {
     let key = currentTurn + '|';
     for (let y = 0; y < 8; y++) {
         for (let x = 0; x < 8; x++) {
             const p = gameState[y][x];
-            key += p ? `${p.color[0]}${p.type[0]}${p.hasMoved?1:0}` : '.';
+            key += p ? `${p.color[0]}${p.type[0]}` : '.';
         }
         key += '/';
     }
-    // En passant target must be part of the position, otherwise two positions
-    // that differ only in en-passant availability collapse to the same key.
+    // Castling rights: encode only the four king/rook pairs that can still castle.
+    // Using per-piece hasMoved flags caused identical positions differing only in a
+    // non-castling piece's hasMoved to get different keys (false-negative draws).
+    const wk  = gameState[7][4], wkr = gameState[7][7], wqr = gameState[7][0];
+    const bk  = gameState[0][4], bkr = gameState[0][7], bqr = gameState[0][0];
+    key += (wk && wk.type==='king' && !wk.hasMoved && wkr && wkr.type==='rook' && !wkr.hasMoved ? 'K' : '');
+    key += (wk && wk.type==='king' && !wk.hasMoved && wqr && wqr.type==='rook' && !wqr.hasMoved ? 'Q' : '');
+    key += (bk && bk.type==='king' && !bk.hasMoved && bkr && bkr.type==='rook' && !bkr.hasMoved ? 'k' : '');
+    key += (bk && bk.type==='king' && !bk.hasMoved && bqr && bqr.type==='rook' && !bqr.hasMoved ? 'q' : '');
+    // En passant target must be part of the position key.
     if (lastMove && lastMove.piece && lastMove.piece.type === 'pawn'
         && Math.abs(lastMove.fromY - lastMove.toY) === 2) {
-        key += `ep${lastMove.toX}`;
+        key += `|ep${lastMove.toX}`;
     }
     return key;
 }

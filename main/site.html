@@ -3,15 +3,107 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chess Game</title>
+    <title>Chess</title>
     <link rel="stylesheet" href="site.css">
     <script src="site-script.js" defer></script>
 </head>
-<body class = "site-body">
-    <div class = "site-container">
-        <h1 class = "site-heading">Chess Game</h1>
-        <p class = "site-text">Welcome to the Chess Game!</p>
-        <button id="startGameButton" class="button">Start Game</button>
-    </div>
+<body class="site-body">
+
+    <!-- ── NAV ──────────────────────────────────────────────────────── -->
+    <header class="site-nav">
+        <div class="nav-logo">
+            <span class="nav-logo-icon">♞</span>
+            <span>Chess</span>
+        </div>
+        <nav class="nav-links">
+            <a href="#modes">Play</a>
+            <a href="#engine">Engine</a>
+            <a href="#rules">Rules</a>
+        </nav>
+        <button id="navPlayButton" class="button nav-play-button">Play Now</button>
+    </header>
+
+    <!-- ── HERO ─────────────────────────────────────────────────────── -->
+    <section class="hero">
+        <div class="hero-text">
+            <h1 class="site-heading">Play Chess.<br>Anytime, Against Anyone.</h1>
+            <p class="site-text">A clean, fast chess board with a built-in engine — challenge the AI at
+                four strengths, or sit back and watch two engines battle it out.</p>
+            <div class="hero-buttons">
+                <button id="startGameButton" class="button primary">Play vs AI</button>
+                <button id="watchAiButton" class="button secondary">Watch AI vs AI</button>
+            </div>
+        </div>
+
+        <div class="hero-board" aria-hidden="true">
+            <div class="mini-board" id="miniBoard"></div>
+        </div>
+    </section>
+
+    <!-- ── MODES ────────────────────────────────────────────────────── -->
+    <section id="modes" class="section">
+        <h2 class="section-heading">Choose Your Game</h2>
+        <div class="card-grid">
+            <div class="card">
+                <div class="card-icon">♟</div>
+                <h3>Play vs AI</h3>
+                <p>Pick your side — White, Black, or Random — and face the engine across four difficulty levels,
+                    from Beginner to Master.</p>
+                <button class="button primary card-button" data-play="human">Play Now</button>
+            </div>
+            <div class="card">
+                <div class="card-icon">⚔</div>
+                <h3>AI vs AI</h3>
+                <p>Watch two engine instances play each other in real time — great for seeing tactics and
+                    endgames unfold without lifting a finger.</p>
+                <button class="button secondary card-button" data-play="ai">Watch Now</button>
+            </div>
+            <div class="card">
+                <div class="card-icon">📜</div>
+                <h3>Full Move History</h3>
+                <p>Every game is recorded in proper algebraic notation (SAN) as you play, so you can review
+                    the whole game afterward.</p>
+                <button class="button secondary card-button" data-play="human">Try It</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── ENGINE ───────────────────────────────────────────────────── -->
+    <section id="engine" class="section section-alt">
+        <h2 class="section-heading">Under the Hood</h2>
+        <div class="feature-grid">
+            <div class="feature">
+                <h4>Negamax + Alpha-Beta</h4>
+                <p>Depth-limited search with alpha-beta pruning cuts away branches that can't affect the result.</p>
+            </div>
+            <div class="feature">
+                <h4>Iterative Deepening</h4>
+                <p>The engine searches progressively deeper within its time budget, always keeping the best move found so far.</p>
+            </div>
+            <div class="feature">
+                <h4>Quiescence Search</h4>
+                <p>Capture sequences are played out past the search horizon to avoid misjudging tactical positions.</p>
+            </div>
+            <div class="feature">
+                <h4>Transposition Table</h4>
+                <p>Positions reached via different move orders are cached, so the engine never re-analyzes the same board twice.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── RULES / DRAWS ────────────────────────────────────────────── -->
+    <section id="rules" class="section">
+        <h2 class="section-heading">Full Rule Support</h2>
+        <ul class="rules-list">
+            <li>Castling (kingside &amp; queenside), en passant, and pawn promotion</li>
+            <li>Check, checkmate, and stalemate detection</li>
+            <li>Draws by threefold repetition, the 50-move rule, and insufficient material</li>
+        </ul>
+    </section>
+
+    <footer class="site-footer">
+        <p>Built with vanilla JavaScript — no frameworks, no backend.</p>
+    </footer>
+
 </body>
 </html>
