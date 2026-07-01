@@ -31,6 +31,20 @@ let selectedDifficulty = 'intermediate';
 const AI_TIME_HUMAN = 1500;  // ms search budget when playing against a human
 const AI_TIME_SELFPLAY = 500; // ms search budget for AI vs AI (keeps it watchable)
 
+// ─── TIME CONTROL (chess clock) ────────────────────────────────────────────────
+// `null` selection (Unlimited) means clockState stays null and the clock UI/tick
+// loop are skipped entirely - untimed play behaves exactly as before this feature.
+const TIME_CONTROLS = {
+    '5|0':   { minutes: 5,  incrementSec: 0  },
+    '10|5':  { minutes: 10, incrementSec: 5  },
+    '15|10': { minutes: 15, incrementSec: 10 },
+};
+let selectedTimeControl = 'unlimited';
+
+// { white, black: ms remaining; incrementMs; lastTick: Date.now() at last tick;
+//   intervalId } or null when untimed.
+let clockState = null;
+
 // ─── MOVE HISTORY ─────────────────────────────────────────────────────────────
 // Each entry: { white: 'e4', black: 'e5' | null }
 let moveHistory = [];
@@ -113,10 +127,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    const params = new URLSearchParams(location.search);
+
+    // site.html's "Resume Game" button links here with ?resume=1 when a saved
+    // in-progress game exists (see saveInProgressGame/clearInProgressGame).
+    // Resolved here, but actually started at the bottom of this handler, after
+    // every other listener below has been wired up.
+    let resumeData = null;
+    if (params.get('resume') === '1') {
+        try { resumeData = JSON.parse(localStorage.getItem('chessInProgressGame')); } catch (e) { resumeData = null; }
+        if (!resumeData || !Array.isArray(resumeData.moveHistory)) resumeData = null;
+    }
+
     // Landing page links here with ?mode=human|ai (and optionally ?difficulty=...)
     // to preselect the setup modal and open it immediately instead of requiring
     // an extra click.
-    const params = new URLSearchParams(location.search);
     const requestedMode = params.get('mode');
     const requestedDifficulty = params.get('difficulty');
     if (setupModal && (requestedMode === 'human' || requestedMode === 'ai')) {
@@ -154,6 +179,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    document.querySelectorAll('.setup-choice[data-time]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            selectedTimeControl = btn.dataset.time;
+            document.querySelectorAll('.setup-choice[data-time]').forEach(b => b.classList.toggle('selected', b === btn));
+        });
+    });
+
     if (beginBtn) {
         beginBtn.addEventListener('click', async () => {
             gameMode = selectedMode;
@@ -179,6 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
         aiThinking = false;
         selectedSquare = null;
         currentValidMoves = [];
+        stopClock();
         setupModal.classList.remove('hidden');
     });
     if (closeBtn)   closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
@@ -200,7 +233,33 @@ document.addEventListener('DOMContentLoaded', () => {
         img.addEventListener('click', e => completePromotion(e.target.getAttribute('data-type')));
     });
 
+    const pgnBtn      = document.getElementById('pgnButton');
+    const pgnBtnModal = document.getElementById('pgnButtonModal');
+    if (pgnBtn)      pgnBtn.addEventListener('click', downloadPGN);
+    if (pgnBtnModal) pgnBtnModal.addEventListener('click', downloadPGN);
+
+    const copyPgnBtn      = document.getElementById('copyPgnButton');
+    const copyPgnBtnModal = document.getElementById('copyPgnButtonModal');
+    const closePgnModalBtn = document.getElementById('closePgnModalButton');
+    const copyPgnConfirmBtn = document.getElementById('copyPgnConfirmButton');
+    if (copyPgnBtn)      copyPgnBtn.addEventListener('click', showPgnModal);
+    if (copyPgnBtnModal) copyPgnBtnModal.addEventListener('click', showPgnModal);
+    if (closePgnModalBtn) closePgnModalBtn.addEventListener('click', () => document.getElementById('pgnModal').classList.add('hidden'));
+    if (copyPgnConfirmBtn) copyPgnConfirmBtn.addEventListener('click', copyPgnToClipboard);
+
+    const resignBtn     = document.getElementById('resignButton');
+    const offerDrawBtn  = document.getElementById('offerDrawButton');
+    const takebackBtn   = document.getElementById('takebackButton');
+    if (resignBtn)    resignBtn.addEventListener('click', resign);
+    if (offerDrawBtn) offerDrawBtn.addEventListener('click', offerDraw);
+    if (takebackBtn)  takebackBtn.addEventListener('click', takeback);
+
     updatePlayerTags();
+
+    if (resumeData) {
+        board.style.display = 'grid';
+        startGame(resumeData);
+    }
 });
 
 // ─── PLAYER TAGS ────────────────────────────────────────────────────────────────
@@ -235,14 +294,9 @@ function setThinkingIndicator(color, on) {
 }
 
 // ─── BOARD INIT ───────────────────────────────────────────────────────────────
-async function startGame() {
-    resetGame();
-    gameActive = true;
+function drawBoardDOM() {
     const board = document.getElementById('chessboard');
     board.innerHTML = '';
-    moveHistory = [];
-    renderMoveHistory();
-    updatePlayerTags();
 
     // 1. Draw the Background Squares
     for (let y = 0; y < 8; y++) {
@@ -285,7 +339,52 @@ async function startGame() {
             }
         }
     }
+}
 
+// `resumeData` (from localStorage's chessInProgressGame, see saveInProgressGame)
+// replays a previously in-progress game instead of starting fresh - same
+// resetGame()-then-replay pattern the Game Analysis Engine and takeback() use.
+async function startGame(resumeData) {
+    if (resumeData) {
+        gameMode = resumeData.gameMode;
+        playerColor = resumeData.playerColor;
+        selectedDifficulty = resumeData.selectedDifficulty;
+        selectedTimeControl = resumeData.selectedTimeControl;
+        isFlipped = playerColor === 'black';
+    }
+
+    resetGame();
+    gameActive = true;
+    gameResult = '*';
+    moveHistory = [];
+
+    if (resumeData) {
+        const sanList = [];
+        for (const row of resumeData.moveHistory) {
+            if (row.white) sanList.push(row.white);
+            if (row.black) sanList.push(row.black);
+        }
+        replaySAN(sanList);
+        moveHistory = resumeData.moveHistory;
+    }
+
+    renderMoveHistory();
+    updatePlayerTags();
+
+    // Resign/draw/takeback only make sense with a human in the game.
+    const liveActions = document.getElementById('liveActionButtons');
+    if (liveActions) liveActions.style.display = gameMode === 'human' ? 'flex' : 'none';
+
+    if (resumeData && resumeData.clock) {
+        stopClock();
+        clockState = { ...resumeData.clock, lastTick: Date.now(), intervalId: null };
+        clockState.intervalId = setInterval(tickClock, 200);
+        updateClockDisplay();
+    } else {
+        startClock();
+    }
+
+    drawBoardDOM();
     updateCheckStatus();
 
     // Kick off the AI if it has to move first (AI vs AI, or human chose Black).
@@ -382,8 +481,10 @@ function handleSquareClick(squareDiv) {
                 const finalSan = sanBase + getCheckSuffix(currentTurn);
                 appendHistoryMove(movingColor, finalSan);
                 playSoundForMove(finalSan);
+                applyIncrement(movingColor);
                 recordPosition();
                 updateCheckStatus();
+                saveInProgressGame();
                 const over = checkGameOver();
                 if (over) { gameActive = false; }
                 else if (currentTurn !== playerColor) {
@@ -399,8 +500,97 @@ function handleSquareClick(squareDiv) {
     }
 }
 
+// ─── CHESS CLOCK ────────────────────────────────────────────────────────────────
+function startClock() {
+    stopClock();
+    const tc = TIME_CONTROLS[selectedTimeControl];
+    if (!tc) { clockState = null; updateClockDisplay(); return; } // Unlimited
+
+    clockState = {
+        white: tc.minutes * 60 * 1000,
+        black: tc.minutes * 60 * 1000,
+        incrementMs: tc.incrementSec * 1000,
+        lastTick: Date.now(),
+    };
+    clockState.intervalId = setInterval(tickClock, 200);
+    updateClockDisplay();
+}
+
+function stopClock() {
+    if (clockState && clockState.intervalId) clearInterval(clockState.intervalId);
+    if (clockState) clockState.intervalId = null;
+}
+
+function tickClock() {
+    if (!clockState || !gameActive) return;
+    const now = Date.now();
+    clockState[currentTurn] -= now - clockState.lastTick;
+    clockState.lastTick = now;
+
+    if (clockState[currentTurn] <= 0) {
+        clockState[currentTurn] = 0;
+        updateClockDisplay();
+        stopClock();
+        gameActive = false;
+        const winner = currentTurn === 'white' ? 'Black' : 'White';
+        showGameOverModal(`${winner} Wins on Time!`);
+        return;
+    }
+    updateClockDisplay();
+}
+
+// Called right after a move completes, crediting that color's increment (Fischer-style).
+function applyIncrement(color) {
+    if (!clockState) return;
+    clockState[color] += clockState.incrementMs;
+}
+
+// ─── SAVE / RESUME IN-PROGRESS GAME ────────────────────────────────────────────
+const INPROGRESS_KEY = 'chessInProgressGame';
+
+function saveInProgressGame() {
+    if (!gameActive || gameMode !== 'human') return; // nothing to resume in AI vs AI
+    localStorage.setItem(INPROGRESS_KEY, JSON.stringify({
+        moveHistory, gameMode, playerColor, selectedDifficulty, selectedTimeControl,
+        clock: clockState ? { white: clockState.white, black: clockState.black, incrementMs: clockState.incrementMs } : null,
+    }));
+}
+
+function clearInProgressGame() {
+    localStorage.removeItem(INPROGRESS_KEY);
+}
+
+function formatClock(ms) {
+    const totalSec = Math.max(0, Math.ceil(ms / 1000));
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function updateClockDisplay() {
+    const topEl = document.getElementById('topTime');
+    const bottomEl = document.getElementById('bottomTime');
+    if (!topEl || !bottomEl) return;
+
+    if (!clockState) { topEl.textContent = ''; bottomEl.textContent = ''; return; }
+
+    const bottomColor = isFlipped ? 'black' : 'white';
+    const topColor    = isFlipped ? 'white' : 'black';
+
+    topEl.textContent = formatClock(clockState[topColor]);
+    bottomEl.textContent = formatClock(clockState[bottomColor]);
+    topEl.classList.toggle('clock-low', clockState[topColor] < 30000);
+    bottomEl.classList.toggle('clock-low', clockState[bottomColor] < 30000);
+}
+
 // ─── AI TURN(S) ─────────────────────────────────────────────────────────────────
-function aiTimeBudget() { return gameMode === 'ai' ? AI_TIME_SELFPLAY : AI_TIME_HUMAN; }
+// With a clock running, the AI's search budget is derived from its own remaining
+// time (capped so a single move can't eat too much of it) rather than the fixed
+// constants, so its thinking time is naturally paid for out of its own clock.
+function aiTimeBudget() {
+    if (clockState) return Math.max(100, Math.min(clockState[currentTurn] / 20, AI_TIME_HUMAN));
+    return gameMode === 'ai' ? AI_TIME_SELFPLAY : AI_TIME_HUMAN;
+}
 function aiDepth()      { return DIFFICULTY[selectedDifficulty].maxDepth; }
 function aiEvalNoise()  { return DIFFICULTY[selectedDifficulty].evalNoise; }
 
@@ -427,9 +617,11 @@ async function playAIMove() {
 
     appendHistoryMove(result.color, result.san);
     playSoundForMove(result.san);
+    applyIncrement(result.color);
     renderBoard();
     highlightLastMove(result.move.fromX, result.move.fromY, result.move.toX, result.move.toY);
     updateCheckStatus();
+    saveInProgressGame();
 
     const over = checkGameOver();
     if (over) { gameActive = false; return; }
@@ -472,11 +664,193 @@ function updateCheckStatus() {
     }
 }
 
+// ─── RESIGN / OFFER DRAW / TAKEBACK (vs-AI mode only) ─────────────────────────
+function resign() {
+    if (!gameActive || gameMode !== 'human') return;
+    gameActive = false;
+    const winner = playerColor === 'white' ? 'Black' : 'White';
+    showGameOverModal(`You resigned! ${winner} Wins!`);
+}
+
+function offerDraw() {
+    if (!gameActive || gameMode !== 'human') return;
+    const aiColor = playerColor === 'white' ? 'black' : 'white';
+    // A quick static eval (no search) from the engine's perspective - simple,
+    // deterministic accept/decline rule, no new AI plumbing needed.
+    const scoreForAI = evaluateForColor(aiColor);
+    if (scoreForAI < 150) {
+        gameActive = false;
+        showGameOverModal('Draw agreed!');
+    } else {
+        alert('The engine declines your draw offer.');
+    }
+}
+
+// Resolves a played SAN string to a move + promotion type on the LIVE board -
+// the same pattern analysis-worker.js's resolveSAN uses, just against gameState
+// directly instead of the worker's isolated copy.
+function resolveSANLive(color, san) {
+    const moves = getAllValidMoves(color);
+    for (const move of moves) {
+        const piece = gameState[move.fromY][move.fromX];
+        const isPromo = piece.type === 'pawn' && (move.toY === 0 || move.toY === 7);
+        if (isPromo) {
+            for (const promo of ['queen', 'rook', 'bishop', 'knight']) {
+                if (moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, promo) === san) {
+                    return { move, promo };
+                }
+            }
+        } else if (moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, null) === san) {
+            return { move, promo: null };
+        }
+    }
+    return null;
+}
+
+function flattenMoveHistorySAN() {
+    const sanList = [];
+    for (const row of moveHistory) {
+        if (row.white) sanList.push(row.white);
+        if (row.black) sanList.push(row.black);
+    }
+    return sanList;
+}
+
+// Replays `sanList` (each already carrying its original +/# suffix) from a
+// fresh board, silently - used to rebuild the position after a takeback.
+function replaySAN(sanList) {
+    resetGame();
+    for (const rawSan of sanList) {
+        const color = currentTurn;
+        const san = rawSan.replace(/[+#]$/, '');
+        const resolved = resolveSANLive(color, san);
+        if (!resolved) break;
+        const isPromoting = movePiece(resolved.move.fromX, resolved.move.fromY, resolved.move.toX, resolved.move.toY, resolved.move.details);
+        if (isPromoting) {
+            gameState[resolved.move.toY][resolved.move.toX].type = resolved.promo || 'queen';
+            currentTurn = currentTurn === 'white' ? 'black' : 'white';
+        }
+        recordPosition();
+    }
+}
+
+function takeback() {
+    if (!gameActive || gameMode !== 'human' || aiThinking) return;
+    const sanList = flattenMoveHistorySAN();
+    if (sanList.length === 0) return;
+
+    // Undo back to right before the human's own last move: drop the AI's reply
+    // (if any) and the human's move that preceded it, so it's the human's turn
+    // again at the same position they had before.
+    sanList.pop();
+    while (sanList.length > 0 && (sanList.length % 2 === 0 ? 'white' : 'black') !== playerColor) {
+        sanList.pop();
+    }
+
+    replaySAN(sanList);
+    moveHistory = [];
+    sanList.forEach((san, i) => appendHistoryMove(i % 2 === 0 ? 'white' : 'black', san));
+
+    selectedSquare = null;
+    currentValidMoves = [];
+    clearMoveHighlights();
+    document.querySelectorAll('.square.last-move').forEach(sq => sq.classList.remove('last-move'));
+    renderBoard();
+    updateCheckStatus();
+    saveInProgressGame();
+}
+
 // ─── MODALS ───────────────────────────────────────────────────────────────────
 function showGameOverModal(message) {
+    stopClock();
+    clearInProgressGame();
     playGameOverSound();
+    gameResult = resultFromMessage(message);
     document.getElementById('modalMessage').textContent = message;
     document.getElementById('gameOverModal').classList.remove('hidden');
+}
+
+// Maps a game-over message (the only place an outcome is decided) to a PGN
+// result token. Falls back to the draw token for any non-checkmate ending
+// (stalemate, threefold, 50-move, insufficient material, resignation-to-come).
+function resultFromMessage(message) {
+    if (/WHITE Wins/i.test(message)) return '1-0';
+    if (/BLACK Wins/i.test(message)) return '0-1';
+    return '1/2-1/2';
+}
+
+// ─── PGN EXPORT ───────────────────────────────────────────────────────────────
+function playerLabel(color) {
+    if (gameMode === 'ai') return 'Engine';
+    return color === playerColor ? 'You' : 'Engine';
+}
+
+function buildPGN() {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
+    const result = gameActive ? '*' : gameResult;
+
+    const headers = [
+        `[Event "Casual Game"]`,
+        `[Site "Chess Site"]`,
+        `[Date "${today}"]`,
+        `[Round "1"]`,
+        `[White "${playerLabel('white')}"]`,
+        `[Black "${playerLabel('black')}"]`,
+        `[Result "${result}"]`,
+    ];
+
+    let movetext = '';
+    moveHistory.forEach((row, i) => {
+        movetext += `${i + 1}. `;
+        if (row.white) movetext += `${row.white} `;
+        if (row.black) movetext += `${row.black} `;
+    });
+    movetext += result;
+
+    return headers.join('\n') + '\n\n' + movetext.trim() + '\n';
+}
+
+function downloadPGN() {
+    if (moveHistory.length === 0) { alert('No moves to export yet!'); return; }
+
+    const pgn = buildPGN();
+    const blob = new Blob([pgn], { type: 'application/x-chess-pgn' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chess-game-${new Date().toISOString().slice(0, 10)}.pgn`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+// Shows the PGN as plain selectable/copyable text instead of triggering a file
+// download - useful for pasting straight into a lichess/chess.com import box or
+// a message, without a .pgn file to manage.
+function showPgnModal() {
+    if (moveHistory.length === 0) { alert('No moves to export yet!'); return; }
+
+    const textarea = document.getElementById('pgnTextArea');
+    textarea.value = buildPGN();
+    document.getElementById('pgnModal').classList.remove('hidden');
+    textarea.focus();
+    textarea.select();
+}
+
+function copyPgnToClipboard() {
+    const textarea = document.getElementById('pgnTextArea');
+    textarea.select();
+
+    // navigator.clipboard requires a secure context (https/localhost); document.
+    // execCommand('copy') is deprecated but still works everywhere else as a
+    // fallback, and doesn't need any extra permission prompt.
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(textarea.value).catch(() => document.execCommand('copy'));
+    } else {
+        document.execCommand('copy');
+    }
 }
 
 function showPromotionModal(x, y, color) {
@@ -501,12 +875,14 @@ function completePromotion(pieceType) {
         const san = pendingPromo.sanBase + '=' + PROMO_LETTER[pieceType] + getCheckSuffix(currentTurn);
         appendHistoryMove(pendingPromo.color, san);
         playSoundForMove(san);
+        applyIncrement(pendingPromo.color);
         pendingPromo = null;
     }
 
     renderBoard();
     recordPosition();
     updateCheckStatus();
+    saveInProgressGame();
 
     const over = checkGameOver();
     if (over) { gameActive = false; return; }

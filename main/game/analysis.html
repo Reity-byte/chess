@@ -20,12 +20,23 @@
                 Exploring variation — not part of the recorded game
                 <button id="backToGameButton" class="button cancel">Back to Game</button>
             </div>
+            <div id="puzzleBanner" class="variation-banner hidden">
+                <span id="puzzleBannerText">Find the punishing move!</span>
+                <button id="exitPuzzleButton" class="button cancel">Exit Puzzle</button>
+            </div>
             <div id="chessboard" class="board"></div>
             <div id="moveCaption" class="move-caption">Loading...</div>
+            <button id="tryPuzzleButton" class="button confirm hidden">Try this as a puzzle</button>
         </div>
 
         <!-- Right sidebar -->
         <aside class="sidebar analysis-sidebar">
+
+            <div id="pgnImportBox" class="pgn-import-box hidden">
+                <p>Paste a PGN to analyze it:</p>
+                <textarea id="pgnInput" class="pgn-input" rows="6" placeholder="1. e4 e5 2. Nf3 Nc6 ..."></textarea>
+                <button id="analyzePgnButton" class="button confirm">Analyze PGN</button>
+            </div>
 
             <div id="reportProgress" class="report-progress"></div>
             <div id="reportAccuracy" class="report-accuracy"></div>

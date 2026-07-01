@@ -345,6 +345,56 @@
     font-size: 22px;
     line-height: 1;
 }
+.player-clock {
+    margin-left: auto;
+    font-family: monospace;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 8px;
+    border-radius: 5px;
+    background: #1c1b19;
+}
+.player-clock.clock-low { color: #e0402c; }
+
+/* ─── PGN IMPORT (analysis.html, shown when there's no game to review) ───────── */
+.pgn-import-box {
+    background: #262522;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.07);
+    padding: 12px;
+}
+.pgn-import-box p {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: #c8c8c6;
+}
+.pgn-input {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    background: #1c1b19;
+    color: #e8e8e6;
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 6px;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+.pgn-text-area {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    background: #1c1b19;
+    color: #e8e8e6;
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 1.5;
+}
 
 /* ─── MOVE HISTORY PANEL ─────────────────────────────────────────────────────── */
 .history-panel {
@@ -489,6 +539,45 @@
 .variation-banner .button {
     padding: 5px 14px;
     font-size: 12px;
+}
+
+/* ─── PUZZLE MODE (analysis.html) ─────────────────────────────────────────────── */
+#tryPuzzleButton {
+    align-self: center;
+    padding: 8px 18px;
+    font-size: 13px;
+}
+
+/* ─── PUZZLE TRAINER (puzzles.html) ───────────────────────────────────────────── */
+.puzzle-stats {
+    display: flex;
+    justify-content: space-between;
+    background: #262522;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.07);
+    padding: 14px 10px;
+}
+.puzzle-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: #e8e8e6;
+}
+.puzzle-stat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #9a9894;
+}
+.puzzle-stat strong {
+    font-size: 20px;
+}
+.puzzle-result {
+    min-height: 1.4em;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 700;
 }
 .variation-line {
     padding: 6px 10px;

@@ -108,6 +108,8 @@ a { color: inherit; text-decoration: none; }
     padding: 6%;
 }
 
+.hidden { display: none !important; }
+
 /* ─── BUTTONS ────────────────────────────────────────────────────────────────── */
 .button {
     padding: 13px 28px;

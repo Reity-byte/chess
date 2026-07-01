@@ -83,7 +83,8 @@ function looksLikeSacrifice(move, moverColor) {
 
 // `winLoss` is win-PROBABILITY-POINT loss (0-100), not raw centipawns - see the
 // comment on ANALYSIS_THRESHOLDS in analysis.js for why.
-function classify(winLoss, wasWinningBefore, isBook, isSac) {
+function classify(winLoss, wasWinningBefore, isBook, isSac, isForced) {
+    if (isForced) return 'Forced'; // no decision was made - takes priority over everything else
     if (isBook) return 'Book';
     if (isSac && winLoss <= ANALYSIS_THRESHOLDS.best) return 'Brilliant';
     if (wasWinningBefore && winLoss > ANALYSIS_THRESHOLDS.mistake) return 'Miss';
@@ -119,6 +120,13 @@ function runAnalysis(sanMoves) {
         const bestBefore = iterativeDeepen(color, ANALYSIS_TIME_MS, ANALYSIS_DEPTH, 0).score;
         const book = isBookMove(san, sanSoFar);
         const sac = !book && looksLikeSacrifice(resolved.move, color);
+        // Only one legal move existed - there was no decision to praise or blame,
+        // so it's classified "Forced" regardless of how the resulting centipawn
+        // swing looks (a forced king move out of check can still show a huge
+        // apparent loss if the position was already lost, same root cause as the
+        // win-probability fix above, but this case deserves its own label rather
+        // than silently landing in whichever bucket the math happens to produce).
+        const isForced = getAllValidMoves(color).length === 1;
 
         applyRealMove(resolved.move, resolved.promo);
 
@@ -146,16 +154,27 @@ function runAnalysis(sanMoves) {
         const winAfter = winProbability(actual);
         const winLoss = Math.max(0, winBefore - winAfter);
         const wasWinningBefore = winBefore > WINNING_WIN_PCT;
-        const category = classify(winLoss, wasWinningBefore, book, sac);
+        const category = classify(winLoss, wasWinningBefore, book, sac, isForced);
 
         // from/to/details/promo let the review page (analysis.html) replay this
         // exact move directly, without re-resolving SAN a second time.
+        // opponentResult.move is the reply the bidirectional search already found
+        // when computing `actual` above - the "punish" move for a Blunder/Miss
+        // puzzle (see analysis-page.js's "Try this as a puzzle" button). null
+        // when the mover's move was itself checkmate/stalemate (no reply exists).
+        const punishMove = opponentResult.move ? {
+            fromX: opponentResult.move.fromX, fromY: opponentResult.move.fromY,
+            toX: opponentResult.move.toX, toY: opponentResult.move.toY,
+            details: opponentResult.move.details,
+        } : null;
+
         perMove.push({
             color, san: rawSAN, category, centipawnLoss: Math.round(centipawnLoss),
             from: { x: resolved.move.fromX, y: resolved.move.fromY },
             to:   { x: resolved.move.toX,   y: resolved.move.toY },
             details: resolved.move.details,
             promo: resolved.promo,
+            punishMove,
         });
         evalGraph.push(color === 'white' ? actual : -actual);
 

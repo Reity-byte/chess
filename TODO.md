@@ -250,6 +250,365 @@ All bug-fix, redesign, and AI Boost Plan items are complete. The Game Analysis E
 worker, dedicated review page, on-board ratings, "what if" branching with move arrows, and move-quality
 glyphs — is fully implemented.
 
+Session 21 investigated **the "AI needs more buffing" question flagged (not started) at the end of
+Session 20** — diagnosed with real profiling instead of guessing, per that session's own instruction not
+to tune constants blind:
+- Method: loaded `notation.js`/`engine.js`/`ai.js` into a Node `vm` sandbox (pure logic, no DOM
+  dependencies) and ran `iterativeDeepen()` directly with instrumented node/call counters, both with a real
+  time budget (matching live-play settings) and with fixed depths and no time limit (to measure true
+  per-depth cost independent of the timeout cutting it short).
+- **Root cause found**: `isSquareAttacked()` in engine.js doesn't do a cheap "what attacks this square"
+  check — it regenerates the *full* pseudo-legal move list (including walking every sliding-piece ray to
+  its full extent) for **every enemy piece on the board**, just to see if one of them lands on the target
+  square. Since `isMoveLegal()` calls this once per candidate move to test king safety, and legality
+  filtering runs on every pseudo-legal move at every search node, this multiplies out badly: instrumented
+  at **~35 `getPseudoLegalMoves()` calls per search node**, just for legality checking.
+- **Measured impact**: NPS (nodes/sec) is only ~15,000-30,000 — a plain JS mailbox engine should comfortably
+  hit 200K-1M+. Concretely, a full (untimed) depth-6 search from the opening position took **3.78 seconds**,
+  while Master difficulty's real per-move budget is 1500ms. This means "Master (depth 6)" almost never
+  actually completes depth 6 in real play — it times out mid-iteration and silently falls back to whatever
+  depth 5 already found (`iterativeDeepen`'s "keep the last fully-completed depth" behavior, from Session
+  2's fix, correctly prevents corruption here, but it does mean the label overstates the real search depth).
+  AI vs AI's 500ms budget caps out around depth 4 in a representative midgame position. This also explains
+  part of the Session 20 "analysis misses" report: the Game Analysis Engine's own ground-truth search
+  (`ANALYSIS_DEPTH = 4`, 400ms) was measured *also* timing out before finishing depth 4 in busy midgame
+  positions — so the classifier judging "was this a blunder" can be working from a shallower/less-complete
+  search than whatever produced the move it's judging.
+- **Quantified the fix, not just diagnosed it**: swapped in an optimized `isSquareAttacked()` (a direct
+  "walk outward from the target square per piece-type/ray and check who's there" reverse lookup, O(1)-ish
+  instead of O(all enemy pieces' full move generation)) inside the same sandbox — not applied to the real
+  file yet, measurement only. Result: depth 6 from the opening dropped from 3.78s to **1.88s** — roughly
+  **2x raw speed**, not the 3x+ depth jump that might be hoped for. Node counts are identical before/after
+  (same algorithm, same tree) — only wall-clock time changes.
+- **Why 2x speed isn't 2x depth, and why depth 15-18 is a much bigger gap than it looks**: search tree size
+  grows *exponentially* with depth. Measured effective branching factor here is ~3.5-4x per additional ply
+  (depth 5→6 alone: 20,804 → 70,390 nodes). A 2x speed gain buys `log(2)/log(3.5) ≈ 0.55` of a ply — call it
+  half a ply to about one full ply deeper, not three. The user directly asked whether this closes most of
+  the gap to a "golden standard" of depth 15-18 — it does not, for three compounding reasons: (1) **raw NPS
+  gap**: engines like Stockfish run 10-100M+ nodes/sec via bitboards and C++; this engine, even after the
+  fix, does ~35-65K nodes/sec, a ~1,000-3,000x gap that has nothing to do with search algorithm quality;
+  (2) **depth 15-18 in a real engine isn't full-width search** — it's reached by aggressively *not*
+  searching most of the nominal tree (null-move pruning, late-move reductions, futility pruning, aspiration
+  windows), none of which this codebase has (only TT/killers/history for move *ordering*, which helps
+  pruning efficiency within alpha-beta but doesn't skip whole subtrees the way those techniques do); (3)
+  **time budget**: strong engines reaching depth 15+ typically get seconds-to-minutes per move, not the
+  500-1500ms this project targets for a responsive UI.
+- **Not implemented this session** — diagnosis and quantified options only, per the explicit ask to explain
+  the tradeoff before writing code. Prioritized follow-up, roughly biggest-win-first:
+  1. **Apply the `isSquareAttacked` optimization to the real engine.js** — ✅ IMPLEMENTED (same session,
+     after the user asked for it once the tradeoff was explained). `engine.js`'s `isSquareAttacked()` now
+     walks outward from the target square per piece-type pattern/ray instead of regenerating every enemy
+     piece's full pseudo-legal move list. Verified two ways: (a) 40 random games (3,198 plies) compared move-
+     for-move between the old and new engine — zero divergence in real gameplay; (b) found and confirmed one
+     genuine **latent bug fix as a side effect**: the old code only treated a pawn as attacking a diagonal
+     square if that square was *already occupied by an enemy piece* (an artifact of reusing pseudo-legal
+     capture-move generation for attack detection), so it never recognized a pawn "guarding" an empty square
+     — meaning castling through a square covered only by an enemy pawn was incorrectly allowed. The new
+     version correctly forbids it (confirmed with a constructed position, both in a Node harness and live in
+     the browser); normal castling without a pawn guard still works. Also verified fool's mate
+     (1.f3 e5 2.g4 Qh4#) is still correctly detected as check + checkmate. Re-measured depth 6 from the
+     opening position on the real file: **3.78s → 2.09s**, matching the ~2x estimate from the sandboxed
+     measurement above.
+  2. **Skip full legality-checking for moves that can't expose the king** — currently every pseudo-legal
+     move pays for a full make/check-attacked/unmake cycle; only king moves, en passant, and moves by an
+     already-pinned piece can ever be illegal in a position where the king wasn't already in check. Skipping
+     the check for the common case (an unpinned piece moving while not in check) is a second, likely larger,
+     NPS multiplier on top of item 1.
+  3. **Add null-move pruning + late-move reductions** — this is the actual mechanism strong engines use to
+     reach double-digit depths without a proportionally exponential time cost; a bigger, riskier change
+     (both can introduce search instability/tactical blind spots if not tuned carefully) than 1-2, but the
+     highest-leverage lever for depth specifically, independent of any further NPS gains.
+  4. **Zobrist hashing instead of string-concatenation `getBoardKey()`** — the current key is a ~70-character
+     string built and hashed (Map key) on every node; a rolling 32/64-bit XOR-based Zobrist key updated
+     incrementally in `applySearchMove`/`undoSearchMove` would be far cheaper per node and is the standard
+     approach, but is a non-trivial refactor (needs a random hash table per piece/color/square plus
+     side-to-move and castling/en-passant components, and the live game's threefold-repetition key would
+     need to either share it or stay separate).
+  5. **Once 1-4 land, re-align `ANALYSIS_DEPTH`/`ANALYSIS_TIME_MS`** so the Game Analysis Engine's
+     ground-truth search is always at least as deep/complete as the deepest difficulty's real gameplay
+     search — directly closes the analysis/gameplay depth mismatch found in this session's profiling.
+  Realistic expectation after all of 1-4: probably depth 8-10 reliably within the existing 500-1500ms
+  budgets, not depth 15-18 — reaching that range would additionally need a bitboard rewrite, which is a
+  materially bigger project than anything else on this list and wasn't scoped here.
+- **Measured the item-1 fix's actual playing-strength gain** (user asked "is it worth it," not just "is it
+  faster") with a real head-to-head match, not just a depth/NPS extrapolation: 16 games, old engine vs. new
+  engine, alternating colors across 8 random opening prefixes, deterministic search (opening book bypassed,
+  `evalNoise = 0`, so the *only* difference between the two sides is search speed/depth), 200ms/move, depth
+  6, 100-ply cap for undecided games. Result: **new engine 3 wins, old engine 1 win, 12 draws** — most games
+  didn't resolve within the ply cap at this shallow per-move budget. Score-based estimate treating draws as
+  half-points: 9/16 = 56.25% ≈ **+40 Elo**, with wide error bars given the small sample. Conclusion: worth
+  keeping (free — no risk, no added complexity, plus the castling-bug fix above), but it's a modest tune-up,
+  not a transformative strength jump; matches the "half a ply, not three" prediction from the depth-vs-time
+  analysis above.
+- **Judged (not implemented or tested) items 3-5 of the follow-up list above**, per a direct follow-up
+  question ("will pruning/Zobrist/re-aligning analysis depth help, use your own judgment, no testing
+  needed"):
+  - **Null-move pruning + LMR (item 3): the real remaining lever.** Categorically different from item 1 —
+    item 1 was a constant-factor speedup (same tree, computed faster); null-move pruning/LMR are
+    *algorithmic* and let the search skip large parts of the tree it currently searches in full. Expected
+    impact: plausibly a few hundred Elo, not another +40 — this is where the actual strength jump lives, not
+    a tune-up. Highest risk on the list too: null-move pruning is unsound in zugzwang positions (mostly
+    king-and-pawn endgames, where any move — including a hypothetical null move — worsens the position), and
+    needs to compose correctly with the existing `CONTEMPT`/draw-avoidance logic already threaded through
+    `makeMoveAndSearch`. Needs real tactical-blindness testing (mate-in-2 puzzles, known zugzwang positions)
+    before trusting it, not just a legality cross-check like item 1 got — should be scoped as its own
+    focused session, not bundled in as a quick add-on.
+  - **Zobrist hashing (item 4): worth it eventually, but a tune-up, not a lever.** Same category as item 1
+    (constant-factor NPS win on the TT-lookup cost specifically), and the item-1 profiling already showed the
+    *dominant* cost was legality-checking, not key-building — so this fixes a smaller slice of the remaining
+    pie. Estimated impact: maybe another 1.3-2x NPS, so another double-digit-to-~50-Elo bump, same order of
+    magnitude as item 1, not pruning-sized. One real complication beyond the mechanical swap: the live game's
+    threefold-repetition key currently *is* `getBoardKey()`'s string — introducing a separate Zobrist key for
+    search means either maintaining two keys or unifying them carefully. Recommended to bundle with item 2
+    (skip-legality-for-safe-moves) as a second hot-path cleanup pass, after pruning, not instead of it.
+  - **Re-aligning `ANALYSIS_DEPTH`/`ANALYSIS_TIME_MS` (item 5): doesn't touch AI strength at all.** Different
+    axis of value — it only affects the Game Analysis Engine's post-game move classifier (making sure "was
+    this a blunder" isn't judged by a shallower search than the move it's judging), not how well the AI
+    itself plays. Cheap now that item 1 shipped (the same `ANALYSIS_TIME_MS` budget reaches further), low
+    risk — worth doing whenever, but shouldn't be counted as part of an "AI strength" push.
+  - **Recommended priority if this continues**: (1) null-move pruning + LMR first (the real jump, needs
+    careful scoping/testing before trusting it), (2) skip-legality-checking + Zobrist together (another
+    constant-factor pass), (3) re-align analysis depth (cheap, unrelated to strength, do it whenever).
+  Explicitly paused here — user said "we will continue later," nothing beyond item 1 implemented this
+  session.
+
+Session 20: added a **"Forced" move category** and **Copy PGN as text**, plus flagged (not started) a
+**deeper AI/engine strength concern** raised directly by the user after using the Puzzle Trainer/analysis:
+- Feedback verbatim: classification is "pretty accurate but still misses," some flagged moves were
+  genuinely forced (no real alternative), and — separately — the AI itself may need more strength work
+  ("maybe its not the analysis but the AI still needs more buffing"). Scoped to two concrete, implementable
+  pieces now, and one open question logged below for a focused follow-up rather than guessing at a fix
+  blind.
+- **Forced move category** (`analysis-worker.js`): `runAnalysis()` now computes
+  `isForced = getAllValidMoves(color).length === 1` for each ply (the mover had exactly one legal move —
+  no decision to praise or blame) and `classify()` gained an `isForced` parameter checked **first**, before
+  Book/Brilliant/Miss/etc., returning `'Forced'` unconditionally. This directly fixes the reported
+  "shouldn't be blamed, there was no choice" case — a forced king move out of check in an already-bad
+  position could previously still show a huge apparent win-probability loss (same root cause as Session
+  12's fix, just a different manifestation) and get mislabeled Blunder/Miss.
+- `analysis.js`: `CATEGORY_COLORS.Forced = '#7c8894'` (neutral grey) and `CATEGORY_SYMBOLS.Forced = '□'`,
+  slotted into the same maps every other category already uses — no changes needed in `analysis-page.js`
+  (move-list glyphs, on-board badges, and the "Try this as a puzzle" button's Blunder/Miss check all read
+  these maps generically and already skip non-Blunder/Miss categories correctly).
+- Verified the detection logic directly: `getAllValidMoves('white').length === 1` for a hand-built genuinely
+  forced position (white king boxed by its own pawn, in check along an open file with exactly one legal
+  king move) returned exactly `1` as expected. A natural example never turned up across ~10 full/near-full
+  self-play games scanned ply-by-ply (a true single-legal-move position is inherently rare outside tight
+  endgames/mating nets) — confirmed via the hand-built position instead, and confirmed the full analysis
+  pipeline still runs clean (regression check: re-ran the `Qxe5??` blunder PGN from Session 18, same
+  categories as before, zero console errors) since the `classify()` signature change is additive.
+- **Copy PGN as text** (the actual roadmap-adjacent request "add export pgn as just copyable text"):
+  `game.html` gained a `#pgnModal` (a readonly `<textarea>` + "Copy to Clipboard"/"Close" buttons) and new
+  "Copy PGN" buttons next to the existing "Download PGN" ones (live sidebar + game-over modal).
+  `showPgnModal()` fills the textarea via the existing `buildPGN()` and auto-selects the full text so a
+  plain Ctrl+C works even without JS clipboard access; `copyPgnToClipboard()` tries
+  `navigator.clipboard.writeText()` (secure-context only) and falls back to the deprecated-but-universal
+  `document.execCommand('copy')`. Verified in the preview browser: modal shows real PGN content, the
+  textarea's full text gets selected (`selectionStart`/`End` spanning the whole string) before the copy
+  call, and the copy path throws no exception; couldn't verify the clipboard's actual contents afterward
+  because the automated browser's `clipboard.readText()` requires document focus that the test harness
+  doesn't have — a harness limitation, not a product bug, confirmed by the write path itself being clean.
+- **Flagged, not started**: whether the AI's actual playing strength needs more work (deeper search,
+  better move ordering, smarter time management, etc.) versus whether remaining analysis quality issues are
+  still an analysis-side artifact (win-probability/Forced were exactly this kind of artifact, twice now) is
+  still an open question. Needs a real investigation session: play/generate several games at each difficulty,
+  compare the AI's moves against what a stronger reference search finds at the same positions, and only
+  then decide whether the fix is in `ai.js`'s search/eval or in `analysis-worker.js`'s classification -
+  don't want to blindly tune constants without first isolating which side of that boundary the remaining
+  "misses" are actually on.
+
+Session 19 built a **standalone, rated Puzzle Trainer** (`main/game/puzzles.html`), a new request on top
+of the roadmap — separate from analysis.html's in-context "Try this as a puzzle" (Session 18), which
+stays exactly as it was:
+- Design question asked and answered first: puzzles needed a source, since this project has no external
+  puzzle database to draw from. Chose "starter bank + auto-grows" over "generate on demand" (an on-demand
+  self-play-plus-analysis pass took 30-130+ seconds in Session 18's testing — not a snappy puzzle-rush feel).
+- `main/game/puzzle-bank.js`: a real starter set of 26 `{sanPrefix, punishMove, rating, category,
+  centipawnLoss, blunderSan}` puzzles, generated by actually running three AI vs AI self-play games
+  (Beginner/Intermediate/Expert, for natural difficulty variety) through the exact same analysis pipeline,
+  extracting every Blunder/Miss with a real `punishMove`, and keeping entries at least 3 plies apart per
+  game to avoid clustering on the same back-and-forth hang/recapture pattern (an unfiltered pass found 71
+  candidates from just those three games).
+- `analysis-worker.js`: `perMove` entries now also carry `punishMove` — the opponent's best reply the
+  bidirectional search (Session 6) already computes when scoring `centipawnLoss`, just not previously
+  returned to the main thread. One new field, no new search work.
+- `main/game/puzzles.html` + `puzzles-page.js`: a dedicated page (rating/streak/solved stats, a board,
+  Give Up / Next Puzzle buttons) that picks the closest-rated unsolved puzzle to the user's current rating
+  (from `STARTER_PUZZLES` plus a growing `localStorage['chessPuzzleBank']` pool), replays its `sanPrefix`
+  to set up the position, and lets the user click-to-guess the punish — correct plays it out and shows a
+  success caption; wrong is a **one-shot fail** (unlike analysis.html's forgiving "try again" puzzle mode
+  — a real rated trainer needed a proper miss) that reveals the actual answer on the board. Rating updates
+  via a simple Elo-style formula (`expected` from the standard logistic curve, `K=24`), persisted alongside
+  streak/solved-count/seen-puzzle-ids in `localStorage` so progress survives a reload; once every puzzle in
+  the pool has been seen, the seen-list resets so the (finite but growing) bank can be replayed.
+- `analysis-page.js`: new `growPuzzleBank()`, called every time a report finishes (`data.type === 'done'`,
+  live game or pasted PGN alike) — scans `perMove` for Blunder/Miss entries with a `punishMove`, converts
+  each into the same puzzle record shape (deduplicated by exact move-prefix so re-analyzing a game doesn't
+  create duplicates, capped at 300 total), and merges them into `localStorage['chessPuzzleBank']`. This is
+  exactly the "auto-grows" half of the answered design question — every future game you review feeds the
+  Puzzle Trainer automatically, no separate action needed.
+- `site.html`: a new "Puzzle Trainer" card in the "Choose Your Game" grid linking to `game/puzzles.html`.
+- Verified in the preview browser: loaded a starter puzzle, confirmed a deliberately wrong guess correctly
+  dropped the rating, reset the streak, and revealed the "Next Puzzle" button without applying the wrong
+  move to the board; confirmed a correct guess raised the rating, incremented streak/solved count, and
+  showed the success caption; confirmed rating/streak/solved-count/seen-ids all survived a page reload and
+  that the next puzzle avoided both already-solved ids; confirmed `growPuzzleBank()` correctly deduplicates
+  and merges a new Blunder into `localStorage['chessPuzzleBank']`, and that `puzzles.html` picked up the
+  grown entry on its next load (27 total = 26 starter + 1 grown). Zero console errors throughout.
+
+Session 18 implemented **item 6 from the Next Roadmap (puzzle mode from your own blunders)** — the
+"stretch idea" — completing every item on the roadmap:
+- `analysis-worker.js`: `runAnalysis()` already computes the opponent's best reply as part of the
+  bidirectional search (`opponentResult` — see Session 6), it just wasn't returned to the main thread.
+  Each `perMove` entry now also carries `punishMove` (that reply's `fromX/fromY/toX/toY/details`, or `null`
+  when the mover's move was itself checkmate/stalemate and no reply exists) — one extra field, no new
+  search work, exactly as scoped in the roadmap's own plan.
+- `analysis.html`: a `#tryPuzzleButton` under the move caption (shown only for a selected ply classified
+  Blunder or Miss with a real `punishMove`) and a `#puzzleBanner` (mirroring the existing
+  `#variationBanner` pattern) with an "Exit Puzzle" button.
+- `analysis-page.js`: `startPuzzle()` freezes the board at the position right after the blunder — which is
+  already the punishing side's turn, since `selectPly(ply)` replays up through and including that move —
+  and stores the target move. `onSquareClick` now branches into `checkPuzzleGuess()` during puzzle mode
+  instead of `playVariationMove()`, reusing the exact same click-to-move interaction "what if" branching
+  already built. A correct guess applies the move and shows a success caption; a wrong guess shows "Not
+  quite — try again!" without touching the board, so the user can keep guessing. `clearPuzzle()` (called
+  from `selectPly()` alongside the existing `clearVariation()`) means navigating anywhere else in the move
+  list or eval graph silently abandons an open puzzle, matching how exploring a variation already behaves.
+- Bug found and fixed during verification: the success-caption SAN was built via
+  `moveToSAN(..., 'queen')` unconditionally, which appends `=Q` (`notation.js`'s promotion suffix) to
+  *any* move, not just real pawn promotions — "Nxe5" was rendering as "Nxe5=Q". Fixed by only passing
+  `'queen'` when the moved piece is actually a pawn reaching the last rank (matching the same
+  `isPawnPromo` pattern `playVariationMove`/`applyRecordedMove` already use), and flipping `currentTurn`
+  manually on the rare case it genuinely is a promotion (mirroring `movePiece`'s documented contract that
+  it does not flip turn itself on a promotion move).
+- Verified in the preview browser: analyzed a PGN with a deliberate mid-game queen blunder (`3. Qxe5??`),
+  confirmed the worker correctly attached `punishMove` matching the actual `3...Nxe5` reply, selected that
+  ply and confirmed the puzzle button appears only there; started the puzzle and confirmed it correctly
+  froze the position with Black to move; tried a wrong knight move first and confirmed the board was left
+  untouched with the "try again" message; then played the correct `Nxe5` and confirmed the success caption,
+  on-board move, and "Solved!" banner all triggered correctly; confirmed "Exit Puzzle" fully restored normal
+  ply browsing. Zero console errors throughout.
+
+Session 17 implemented **item 5 from the Next Roadmap (save & resume an in-progress game)**, completing
+all six items originally proposed:
+- `game-script.js`: `saveInProgressGame()` serializes `{ moveHistory, gameMode, playerColor,
+  selectedDifficulty, selectedTimeControl, clock }` to `localStorage['chessInProgressGame']` after every
+  move (human, AI, and promotion — the same three sites already hooked for sound/PGN/clock-increment), but
+  only in vs-AI mode (`gameMode === 'human'` — nothing to resume in AI vs AI, there's no human side).
+  `clearInProgressGame()` is called from `showGameOverModal()`, so the save disappears the instant the game
+  actually ends (checkmate, draw, resign, time forfeit) and never offers a stale "resume" for a finished
+  game. `takeback()` also re-saves afterward so an undone move doesn't leave a stale, longer save behind.
+- `startGame()` was refactored to take an optional `resumeData` parameter (board-square/piece drawing was
+  pulled out into a new `drawBoardDOM()` helper, reused by both the fresh-game and resume paths). When
+  present, it restores `gameMode`/`playerColor`/`selectedDifficulty`/`selectedTimeControl`, replays the
+  saved move list via the same `replaySAN()` takeback() already established, and restores the clock's
+  saved remaining time (not a fresh full duration) before resuming its `setInterval`.
+  `game-script.js`'s `DOMContentLoaded` handler reads `?resume=1` (mirroring the existing `?mode=`/
+  `?difficulty=` URL-preselect pattern), and — after every other listener is wired, so the resumed game's
+  buttons all work — calls `startGame(resumeData)` directly instead of showing the setup modal.
+- `site.html`/`site-script.js`: a "Resume Game" button next to "Play vs AI" in the hero, hidden by default
+  (new `.hidden` utility class added to `site.css`) and shown only when `localStorage['chessInProgressGame']`
+  exists; navigates to `game.html?resume=1`.
+- Verified in the preview browser: started a 10|5 vs-AI game, played 1.e4 e5 (confirmed the saved payload
+  in `localStorage` matched exactly, including the Fischer increment already applied to White's clock),
+  then navigated fresh to `game.html?resume=1` — confirmed `gameActive` true, the move history and board
+  both correctly replayed (pawns on e4/e5), the clock resumed from its saved remaining time (further ticked
+  down by the real time that had passed, correctly), the setup modal stayed hidden, and playing an
+  additional move (2.Nf3) worked normally afterward. Zero console errors.
+
+Session 16 implemented **item 4 from the Next Roadmap (chess clock / time controls)**:
+- `game.html`: new `#timeControlRow` in the setup modal (5|0, 10|5, 15|10, Unlimited — same `.setup-choice`
+  button pattern as mode/color/difficulty, zero new CSS needed there) and a `.player-clock` span in each
+  player tag.
+- `game-script.js`: `TIME_CONTROLS` map (minutes + Fischer increment seconds); `clockState` (`null` when
+  Unlimited, so untimed play is completely unaffected by this feature) holds `{white, black}` ms remaining,
+  `incrementMs`, and the real-time `lastTick` timestamp. `startClock()`/`stopClock()` manage a 200ms
+  `setInterval`; `tickClock()` decrements the side-to-move's clock by actual elapsed wall-clock time
+  (`Date.now()` deltas, not a fixed per-tick decrement), so time lost to the browser throttling background
+  tabs or a long synchronous AI search still gets charged correctly instead of under-counting. Hitting 0
+  immediately ends the game via the existing `showGameOverModal()` with "White/Black Wins on Time!" (parsed
+  into the correct PGN result token by the same `resultFromMessage()` from Session 13, no changes needed
+  there). `applyIncrement(color)` is called from all three move-completion sites (human move, AI move,
+  promotion) alongside the existing sound/PGN hooks.
+- Per the roadmap's specific plan: `aiTimeBudget()` now derives the AI's search budget from its own
+  remaining clock time when a clock is running (`clockState[currentTurn] / 20`, capped at
+  `AI_TIME_HUMAN` and floored at 100ms) instead of the fixed `AI_TIME_HUMAN`/`AI_TIME_SELFPLAY` constants —
+  since `iterativeDeepen`'s existing hard deadline check already can't blow past whatever budget it's
+  given, this alone is enough to make the AI's own thinking time naturally come out of its own clock
+  allocation, no separate accounting needed.
+- `stopClock()` is called from `showGameOverModal()` (covers every ending: checkmate, stalemate,
+  threefold, 50-move, insufficient material, resign, draw, and time forfeit itself) and from the restart
+  button handler.
+- Verified in the preview browser: started a 5|0 game, confirmed both clocks read exactly `5:00` at kickoff
+  and correctly ticked down by real elapsed wall-clock time (not a fixed per-poll amount); manually set
+  White's clock to 150ms and confirmed the very next tick ended the game with "Black Wins on Time!",
+  `gameResult` resolving to the correct `0-1`, and the interval being cleared. Zero console errors.
+- Not implemented this session (flagged, not started): save/resume mid-game state persisting the running
+  clock across a page reload — that's item 5 on the roadmap and would need the clock's remaining time
+  folded into whatever gets serialized to `localStorage`.
+
+Session 15 implemented **item 3 from the Next Roadmap (resign / offer draw / takeback)**, vs-AI mode only:
+- `game.html`: new `#liveActionButtons` row (Takeback / Offer Draw / Resign), hidden by default and only
+  shown in `startGame()` when `gameMode === 'human'` (no resigning/drawing/taking back in AI vs AI, where
+  there's no human player).
+- `resign()`: ends the game immediately via the existing `showGameOverModal()`, phrased as
+  `"You resigned! White/Black Wins!"` so `resultFromMessage()` (added in Session 13) still parses the
+  correct `1-0`/`0-1` PGN token from it with no special-casing needed.
+- `offerDraw()`: a quick **static** `evaluateForColor(aiColor)` call (no search - deliberately simple and
+  deterministic per the roadmap's own plan) decides accept/decline; accepts (ends the game as `1/2-1/2` via
+  `showGameOverModal('Draw agreed!')`) if the engine isn't clearly winning (`score < 150`), otherwise an
+  `alert` declines.
+- `takeback()`: reuses the exact replay pattern `analysis-worker.js`'s `resolveSAN`/`applyRealMove` already
+  established for the Game Analysis Engine — a matching `resolveSANLive()`/`replaySAN()` pair added to
+  `game-script.js`, operating on the LIVE `gameState` instead of the worker's isolated copy. Pops the AI's
+  reply and the human's own last move off the flattened SAN history (so it's the human's turn again at the
+  same position they had before), replays the remainder from a fresh `resetGame()`, and rebuilds
+  `moveHistory`/the board/check-highlighting from that.
+- Verified in the preview browser: played 1.e4 c5 as White vs AI, called `takeback()` and confirmed the
+  board fully reverted to the starting position (`e2` pawn restored, `e4` empty, `moveHistory` empty,
+  still White to move); called `resign()` and confirmed `gameResult` correctly resolved to `0-1` with the
+  right modal message; called `offerDraw()` twice — once from the balanced starting position (accepted,
+  `gameActive` → false) and once after removing White's queen to simulate Black clearly winning (declined
+  via alert, game stayed active). Zero console errors across all three.
+
+Session 14 implemented **PGN import**, completing item 2 from the Next Roadmap:
+- `analysis.html`: new `#pgnImportBox` (a textarea + "Analyze PGN" button) in the sidebar, hidden by
+  default and only shown when there's no `localStorage` game to load (the existing "No recent game found"
+  branch) — matching the roadmap's "shown when there's no localStorage game" option over always-visible.
+- `analysis-page.js`: `parsePGNMovetext(pgnText)` strips `[Header "lines"]`, `{comments}`, `$NAGs`, move
+  numbers (`12.`/`12...`), and the trailing result marker (`1-0`/`0-1`/`1/2-1/2`/`*`) down to a plain SAN
+  array — doesn't handle nested `(...)` variations, out of scope for a paste-a-mainline-game box. The
+  existing worker-launch code (progress/done/error handling) was extracted into a shared `startAnalysis
+  (sanMoves)` so both the `localStorage` path and the pasted-PGN path feed the exact same
+  `{ type: 'analyze', sanMoves }` message with zero worker changes, exactly as planned.
+- `game.css`: `.pgn-import-box`/`.pgn-input` (dark textarea matching the existing panel styling).
+- Verified in the preview browser: pasted a real Ruy Lopez PGN (with header lines and a result marker) into
+  the box, confirmed `parsePGNMovetext` correctly produced 14 clean SAN moves, and the resulting report
+  rendered a full move list with quality glyphs, an on-board caption ("7. d6 — Best (-0 cp)"), and 83%/83%
+  accuracy — the same rendering pipeline a live game already uses. Zero console errors.
+
+Session 13 implemented **PGN export** (item 2's export half from the Next Roadmap; import deferred):
+- `game-script.js`: `buildPGN()` builds standard PGN text from `moveHistory` with `[Event]`/`[Site]`/
+  `[Date]`/`[Round]`/`[White]`/`[Black]`/`[Result]` headers (player labels via `playerLabel(color)`, "You"
+  vs "Engine" resolved the same way `updatePlayerTags()` already does) plus properly move-numbered
+  movetext ending in the real PGN result token. `downloadPGN()` triggers the file save via
+  `new Blob([pgn], {type:'application/x-chess-pgn'})` + a temporary `<a download>` link, no new
+  dependencies.
+- Result tracking: new `gameResult` global (`'*'` while a game is in progress), set by
+  `resultFromMessage()` inside `showGameOverModal()` — the one place every ending (checkmate, stalemate,
+  threefold, 50-move, insufficient material) already funnels through — by pattern-matching the message text
+  for "WHITE Wins"/"BLACK Wins" and defaulting to the draw token otherwise. Reset to `'*'` in `startGame()`
+  since `resetGame()` in engine.js doesn't know about this game-script.js-only field.
+- Two entry points, both calling the same `downloadPGN()`: `#pgnButton` in the live sidebar (next to the
+  sound toggle) and `#pgnButtonModal` in the game-over modal (next to "View Game Report") — matching the
+  roadmap's "game-over modal, and maybe the live sidebar" suggestion.
+- Verified in the preview browser: played a full AI vs AI game to an actual checkmate, confirmed
+  `gameResult` correctly resolved to `1-0` matching "Checkmate! WHITE Wins!", and `buildPGN()` produced a
+  fully valid PGN text block ending in `... Rf8# 1-0`. Also confirmed `buildPGN()` mid-game correctly emits
+  `*` as the result. Clicked `#pgnButton` directly in the DOM with zero console errors.
+- PGN import (the "Analyze a PGN" text box on analysis.html) is intentionally deferred — not started this
+  session, scoped for later per the original roadmap item.
+
 Session 12 fixed **the Game Analysis Engine over-flagging blunders in already-decided positions**
 (reported after a real vs-AI game showed White at 88% accuracy but Black at a flat 0%, with nearly every
 Black move from the midgame on flagged Blunder/Mistake despite the user having played the endgame
@@ -377,7 +736,7 @@ single most noticeable "not a real chess site yet" gap.
   `localStorage` so it survives a page reload.
 - No sound needed on analysis.html — it's a review tool, not live play.
 
-### 2. PGN import/export
+### 2. PGN import/export — ✅ IMPLEMENTED (Sessions 13-14)
 
 Right now the *only* way to get a game into the Game Analysis Engine is to play it live in this app. PGN
 support makes the analysis engine useful for literally any game (a famous game, a game from another site,
@@ -394,7 +753,7 @@ one of your own from before), and export lets people save or share what they pla
   **exact same** `{ type: 'analyze', sanMoves }` message the worker already accepts. This reuses the whole
   analysis pipeline with zero changes to `analysis-worker.js` — the parser is the only new code.
 
-### 3. Resign / offer draw / takeback in live play
+### 3. Resign / offer draw / takeback in live play — ✅ IMPLEMENTED (Session 15)
 
 Currently the *only* way a game vs AI ends is checkmate, stalemate, or a draw rule firing — there's no way
 to bail out of a lost position or take back a misclick.
@@ -410,7 +769,7 @@ to bail out of a lost position or take back a misclick.
   `applyRecordedMove` already established, just reused in game-script.js instead of writing a new undo
   stack from scratch.
 
-### 4. Chess clock (time controls)
+### 4. Chess clock (time controls) — ✅ IMPLEMENTED (Session 16)
 
 A meaningfully bigger feature, but "untimed only" is one of the more obvious gaps versus a real chess site.
 
@@ -423,7 +782,7 @@ A meaningfully bigger feature, but "untimed only" is one of the more obvious gap
 - Two time displays in the player tags (`#topName`/`#bottomName`'s siblings). Hitting 0 ends the game
   immediately: "X wins on time" via the existing game-over modal.
 
-### 5. Save & resume an in-progress game
+### 5. Save & resume an in-progress game — ✅ IMPLEMENTED (Session 17)
 
 Closing the tab mid-game currently loses everything — no persistence at all for a game still being played
 (only *finished* games get handed to the analysis page via `localStorage`).
@@ -435,7 +794,7 @@ Closing the tab mid-game currently loses everything — no persistence at all fo
   replay pattern as everywhere else in this codebase by now) instead of starting fresh.
 - Clear the saved key on checkmate/stalemate/draw/resign (whichever ships from item 3).
 
-### 6. *(Stretch idea)* Puzzle mode generated from your own blunders
+### 6. *(Stretch idea)* Puzzle mode generated from your own blunders — ✅ IMPLEMENTED (Session 18)
 
 The most creative one, and the biggest scope of this list — pairs the Game Analysis Engine with the
 "what if" branching machinery that's already built.

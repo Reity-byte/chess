@@ -37,12 +37,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const navPlay   = document.getElementById('navPlayButton');
     const startBtn  = document.getElementById('startGameButton');
     const watchBtn  = document.getElementById('watchAiButton');
+    const resumeBtn = document.getElementById('resumeGameButton');
 
     if (navPlay)  navPlay.addEventListener('click', () => goToGame('human'));
     if (startBtn) startBtn.addEventListener('click', () => goToGame('human'));
     if (watchBtn) watchBtn.addEventListener('click', () => goToGame('ai'));
 
+    // An in-progress game (not yet finished) leaves a save behind - see
+    // game-script.js's saveInProgressGame(). Offer to jump straight back in.
+    let hasSavedGame = false;
+    try { hasSavedGame = !!localStorage.getItem('chessInProgressGame'); } catch (e) { hasSavedGame = false; }
+    if (resumeBtn) {
+        resumeBtn.classList.toggle('hidden', !hasSavedGame);
+        resumeBtn.addEventListener('click', () => location.href = 'game/game.html?resume=1');
+    }
+
     document.querySelectorAll('.card-button[data-play]').forEach(btn => {
         btn.addEventListener('click', () => goToGame(btn.dataset.play));
     });
+
+    const puzzlesBtn = document.getElementById('puzzlesButton');
+    if (puzzlesBtn) puzzlesBtn.addEventListener('click', () => location.href = 'game/puzzles.html');
 });

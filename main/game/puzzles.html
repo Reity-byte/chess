@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puzzle Trainer</title>
+    <link rel="stylesheet" href="game.css">
+    <script src="engine.js"   defer></script>
+    <script src="notation.js" defer></script>
+    <script src="puzzle-bank.js" defer></script>
+    <script src="puzzles-page.js" defer></script>
+</head>
+<body class="game-body">
+
+    <div class="game-layout">
+
+        <!-- Board + status -->
+        <div class="board-column">
+            <div id="chessboard" class="board"></div>
+            <div id="puzzleCaption" class="move-caption">Loading puzzles...</div>
+        </div>
+
+        <!-- Right sidebar -->
+        <aside class="sidebar analysis-sidebar">
+
+            <div class="puzzle-stats">
+                <div class="puzzle-stat">
+                    <span class="puzzle-stat-label">Rating</span>
+                    <strong id="puzzleRatingValue">1200</strong>
+                </div>
+                <div class="puzzle-stat">
+                    <span class="puzzle-stat-label">Streak</span>
+                    <strong id="puzzleStreakValue">0</strong>
+                </div>
+                <div class="puzzle-stat">
+                    <span class="puzzle-stat-label">Solved</span>
+                    <strong id="puzzleSolvedValue">0</strong>
+                </div>
+            </div>
+
+            <div id="puzzleResult" class="puzzle-result"></div>
+
+            <div class="game-buttons">
+                <button id="giveUpButton"   class="button cancel">Give Up</button>
+                <button id="nextPuzzleButton" class="button confirm hidden">Next Puzzle</button>
+            </div>
+
+            <div class="game-buttons">
+                <button id="homeButton" class="button cancel">Home</button>
+            </div>
+
+        </aside>
+    </div>
+
+</body>
+</html>

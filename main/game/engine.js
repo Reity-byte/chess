@@ -261,13 +261,62 @@ function isValidLanding(tx, ty, myColor) {
     return !t || t.color !== myColor;
 }
 
+// Reverse "who attacks this square" lookup: walk outward from (tx,ty) per
+// piece-type pattern and check what's there, instead of regenerating every
+// enemy piece's full pseudo-legal move list (was the dominant cost in the
+// search - profiled at ~35 getPseudoLegalMoves() calls per search node).
 function isSquareAttacked(tx, ty, enemyColor) {
-    for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const p = gameState[y][x];
-            if (p && p.color === enemyColor) {
-                if (getPseudoLegalMoves(x, y, false).some(m => m.x === tx && m.y === ty)) return true;
+    // Pawn: an enemy pawn attacks (tx,ty) if it sits one diagonal step "behind"
+    // the attacked square from the enemy's own forward direction.
+    const pawnDir = enemyColor === 'white' ? 1 : -1;
+    for (const dx of [-1, 1]) {
+        const px = tx + dx, py = ty + pawnDir;
+        if (px >= 0 && px < 8 && py >= 0 && py < 8) {
+            const p = gameState[py][px];
+            if (p && p.type === 'pawn' && p.color === enemyColor) return true;
+        }
+    }
+    // Knight
+    for (const [dx, dy] of [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]) {
+        const nx = tx + dx, ny = ty + dy;
+        if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
+            const p = gameState[ny][nx];
+            if (p && p.type === 'knight' && p.color === enemyColor) return true;
+        }
+    }
+    // King (adjacency)
+    for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = tx + dx, ny = ty + dy;
+            if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
+                const p = gameState[ny][nx];
+                if (p && p.type === 'king' && p.color === enemyColor) return true;
             }
+        }
+    }
+    // Sliding: bishop/queen on diagonals
+    for (const [dx, dy] of [[1,1],[1,-1],[-1,1],[-1,-1]]) {
+        let cx = tx + dx, cy = ty + dy;
+        while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
+            const p = gameState[cy][cx];
+            if (p) {
+                if (p.color === enemyColor && (p.type === 'bishop' || p.type === 'queen')) return true;
+                break;
+            }
+            cx += dx; cy += dy;
+        }
+    }
+    // Sliding: rook/queen on files/ranks
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        let cx = tx + dx, cy = ty + dy;
+        while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
+            const p = gameState[cy][cx];
+            if (p) {
+                if (p.color === enemyColor && (p.type === 'rook' || p.type === 'queen')) return true;
+                break;
+            }
+            cx += dx; cy += dy;
         }
     }
     return false;

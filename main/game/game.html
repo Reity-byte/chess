@@ -26,6 +26,7 @@
             <div class="player-tag player-top">
                 <div class="player-avatar" id="topAvatar">♟</div>
                 <span class="player-name" id="topName">Engine (Black)</span>
+                <span class="player-clock" id="topTime"></span>
             </div>
 
             <!-- Move history panel -->
@@ -50,6 +51,7 @@
             <div class="player-tag player-bottom">
                 <div class="player-avatar" id="bottomAvatar">♙</div>
                 <span class="player-name" id="bottomName">You (White)</span>
+                <span class="player-clock" id="bottomTime"></span>
             </div>
 
             <!-- Buttons -->
@@ -58,6 +60,14 @@
                 <button id="exitButton"   class="button cancel">Exit</button>
                 <button id="soundToggleButton" class="button cancel sound-toggle" aria-label="Mute sound">🔊</button>
                 <button id="pgnButton"     class="button cancel">Download PGN</button>
+                <button id="copyPgnButton" class="button cancel">Copy PGN</button>
+            </div>
+
+            <!-- vs-AI-only live actions: no resignation/draw/takeback in AI vs AI -->
+            <div class="game-buttons" id="liveActionButtons" style="display:none;">
+                <button id="takebackButton"  class="button cancel">Takeback</button>
+                <button id="offerDrawButton" class="button cancel">Offer Draw</button>
+                <button id="resignButton"    class="button cancel">Resign</button>
             </div>
 
         </aside>
@@ -93,6 +103,16 @@
                 </div>
             </div>
 
+            <div id="timeControlRow">
+                <p style="margin-bottom:10px;">Time Control</p>
+                <div class="modal-buttons" style="margin-bottom:24px;">
+                    <button class="button cancel setup-choice"          data-time="5|0">5|0</button>
+                    <button class="button cancel setup-choice"          data-time="10|5">10|5</button>
+                    <button class="button cancel setup-choice"          data-time="15|10">15|10</button>
+                    <button class="button cancel setup-choice selected" data-time="unlimited">Unlimited</button>
+                </div>
+            </div>
+
             <div class="modal-buttons">
                 <button id="beginGameButton" class="button confirm">Begin</button>
             </div>
@@ -107,7 +127,20 @@
                 <button id="restartButton"   class="button confirm">Play Again</button>
                 <button id="reportButton"    class="button cancel">View Game Report</button>
                 <button id="pgnButtonModal"  class="button cancel">Download PGN</button>
+                <button id="copyPgnButtonModal" class="button cancel">Copy PGN</button>
                 <button id="closeModalButton" class="button cancel">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── PGN TEXT MODAL ───────────────────────────────────────────── -->
+    <div id="pgnModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h2 style="margin-bottom:16px">PGN</h2>
+            <textarea id="pgnTextArea" class="pgn-text-area" rows="10" readonly></textarea>
+            <div class="modal-buttons" style="margin-top:16px;">
+                <button id="copyPgnConfirmButton" class="button confirm">Copy to Clipboard</button>
+                <button id="closePgnModalButton" class="button cancel">Close</button>
             </div>
         </div>
     </div>

@@ -28,15 +28,28 @@ let selectedSquare = null;
 let currentValidMoves = [];
 let engineThinking = false;
 
+// ─── PUZZLE MODE ("try this as a puzzle") ──────────────────────────────────────
+// Presents the position right after a Blunder/Miss (the punishing side's turn)
+// and asks the user to find the reply the worker already computed as that
+// blunder's `actual` when scoring it - see analysis-worker.js's `punishMove`.
+let puzzleActive = false;
+let puzzlePly = -1;
+let puzzleTarget = null; // { fromX, fromY, toX, toY, details }
+let puzzleSolved = false;
+
 document.addEventListener('DOMContentLoaded', () => {
     const newGameBtn = document.getElementById('newGameButton');
     const homeBtn = document.getElementById('homeButton');
     const backToGameBtn = document.getElementById('backToGameButton');
     const board = document.getElementById('chessboard');
+    const tryPuzzleBtn = document.getElementById('tryPuzzleButton');
+    const exitPuzzleBtn = document.getElementById('exitPuzzleButton');
 
     if (newGameBtn) newGameBtn.addEventListener('click', () => location.href = 'game.html');
     if (homeBtn) homeBtn.addEventListener('click', () => location.href = '../site.html');
     if (backToGameBtn) backToGameBtn.addEventListener('click', () => selectPly(variationBranchPly));
+    if (tryPuzzleBtn) tryPuzzleBtn.addEventListener('click', startPuzzle);
+    if (exitPuzzleBtn) exitPuzzleBtn.addEventListener('click', () => selectPly(puzzlePly));
 
     board.addEventListener('click', (e) => {
         const sq = e.target.closest('.square');
@@ -45,16 +58,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
     drawEmptyBoard();
 
-    const progressEl = document.getElementById('reportProgress');
+    const importBox = document.getElementById('pgnImportBox');
+    const analyzePgnBtn = document.getElementById('analyzePgnButton');
+    if (analyzePgnBtn) {
+        analyzePgnBtn.addEventListener('click', () => {
+            const pgnText = document.getElementById('pgnInput').value;
+            const sanMoves = parsePGNMovetext(pgnText);
+            if (sanMoves.length === 0) { alert('No moves found in that PGN.'); return; }
+            if (importBox) importBox.classList.add('hidden');
+            startAnalysis(sanMoves);
+        });
+    }
+
     let sanMoves = null;
     try { sanMoves = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) { sanMoves = null; }
 
     if (!Array.isArray(sanMoves) || sanMoves.length === 0) {
-        progressEl.textContent = 'No recent game found — play a game first.';
+        document.getElementById('reportProgress').textContent = 'No recent game found — paste a PGN below, or play a game first.';
         document.getElementById('moveCaption').textContent = '';
+        if (importBox) importBox.classList.remove('hidden');
         return;
     }
 
+    startAnalysis(sanMoves);
+});
+
+// Parses PGN movetext into a plain SAN array: strips header lines ("[Event ..]"),
+// `{comments}`, `$NAGs`, move numbers ("12." / "12..."), and the trailing result
+// marker (1-0 / 0-1 / 1/2-1/2 / *). Doesn't handle nested variations "(...)" -
+// out of scope for a "paste a mainline game" import box.
+function parsePGNMovetext(pgnText) {
+    let text = pgnText
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\{[^}]*\}/g, ' ')
+        .replace(/\$\d+/g, ' ')
+        .replace(/\d+\.(\.\.)?/g, ' ')
+        .replace(/1-0|0-1|1\/2-1\/2|\*/g, ' ');
+    return text.split(/\s+/).map(s => s.trim()).filter(Boolean);
+}
+
+// Feeds `sanMoves` into the analysis worker, whether it came from the just-
+// finished live game (localStorage) or a pasted PGN. Shared so both entry
+// points get identical progress/render/error handling.
+function startAnalysis(sanMoves) {
+    const progressEl = document.getElementById('reportProgress');
     progressEl.textContent = `Analyzing move 0 / ${sanMoves.length}...`;
 
     worker = new Worker('analysis-worker.js');
@@ -68,6 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
             renderMoveList();
             renderGraph();
             renderAccuracy();
+            growPuzzleBank(sanMoves, report.perMove);
             selectPly(report.perMove.length - 1); // default: final position of the game
         } else if (data.type === 'error') {
             progressEl.textContent = 'Analysis failed: ' + data.message;
@@ -79,7 +127,60 @@ document.addEventListener('DOMContentLoaded', () => {
         progressEl.textContent = 'Analysis failed: ' + err.message;
     };
     worker.postMessage({ type: 'analyze', sanMoves });
-});
+}
+
+// ─── PUZZLE BANK GROWTH ─────────────────────────────────────────────────────────
+// Every analyzed game (live or pasted) contributes its Blunder/Miss positions to
+// the same growing pool puzzles.html's Puzzle Trainer draws from, in addition to
+// the starter set shipped in puzzle-bank.js. Deduplicates by exact move prefix
+// so re-analyzing the same game twice doesn't create duplicate puzzles, and caps
+// total size so the bank can't grow unbounded in localStorage.
+const PUZZLE_BANK_KEY = 'chessPuzzleBank';
+const PUZZLE_BANK_CAP = 300;
+
+// Same heuristic used to rate puzzle-bank.js's starter set: a punish that lands
+// on the exact square the blunder's piece just moved to is a simple, "obvious"
+// recapture (lower rating); anything else is scored higher, both nudged further
+// by how large the centipawn swing was. Not calibrated against real solve-rate
+// data - there isn't any for this project - just a rough difficulty proxy.
+function estimatePuzzleRating(entry) {
+    const isObviousRecapture = entry.punishMove
+        && entry.punishMove.toX === entry.to.x && entry.punishMove.toY === entry.to.y;
+    let rating = 1000;
+    rating += isObviousRecapture ? -200 : 300;
+    rating += Math.min(400, entry.centipawnLoss / 4);
+    return Math.max(600, Math.min(2200, Math.round(rating)));
+}
+
+function growPuzzleBank(sanMoves, perMove) {
+    let bank = [];
+    try { bank = JSON.parse(localStorage.getItem(PUZZLE_BANK_KEY)) || []; } catch (e) { bank = []; }
+
+    const existingKeys = new Set(bank.map(p => p.sanPrefix.join('|')));
+    let added = false;
+
+    perMove.forEach((entry, i) => {
+        if ((entry.category !== 'Blunder' && entry.category !== 'Miss') || !entry.punishMove) return;
+        const sanPrefix = sanMoves.slice(0, i + 1);
+        const key = sanPrefix.join('|');
+        if (existingKeys.has(key)) return;
+        existingKeys.add(key);
+        bank.push({
+            id: 'grown-' + Date.now() + '-' + i,
+            sanPrefix,
+            punishMove: entry.punishMove,
+            rating: estimatePuzzleRating(entry),
+            category: entry.category,
+            centipawnLoss: Math.min(entry.centipawnLoss, 2000),
+            blunderSan: entry.san,
+        });
+        added = true;
+    });
+
+    if (!added) return;
+    if (bank.length > PUZZLE_BANK_CAP) bank = bank.slice(bank.length - PUZZLE_BANK_CAP);
+    localStorage.setItem(PUZZLE_BANK_KEY, JSON.stringify(bank));
+}
 
 // ─── BOARD ──────────────────────────────────────────────────────────────────────
 function drawEmptyBoard() {
@@ -111,6 +212,7 @@ function applyRecordedMove(entry) {
 function selectPly(ply) {
     if (!report) return;
     clearVariation();
+    clearPuzzle();
 
     selectedPly = Math.max(-1, Math.min(ply, report.perMove.length - 1));
 
@@ -120,15 +222,21 @@ function selectPly(ply) {
     drawPieces();
     updateMoveListSelection();
 
+    const tryPuzzleBtn = document.getElementById('tryPuzzleButton');
+
     if (selectedPly < 0) {
         setCaption('Starting position', '');
         clearMoveArrow();
+        if (tryPuzzleBtn) tryPuzzleBtn.classList.add('hidden');
     } else {
         const entry = report.perMove[selectedPly];
         addCategoryBadge(entry.to, entry.category, entry.centipawnLoss);
         const moveNum = Math.floor(selectedPly / 2) + 1;
         setCaption(`${moveNum}. ${entry.san} — ${entry.category} (-${entry.centipawnLoss} cp)`, CATEGORY_COLORS[entry.category]);
         drawMoveArrow(entry.from, entry.to);
+
+        const canPuzzle = (entry.category === 'Blunder' || entry.category === 'Miss') && entry.punishMove;
+        if (tryPuzzleBtn) tryPuzzleBtn.classList.toggle('hidden', !canPuzzle);
     }
 }
 
@@ -211,11 +319,72 @@ function onSquareClick(x, y) {
 
     if (selectedSquare) {
         const chosen = currentValidMoves.find(m => m.x === x && m.y === y);
-        if (chosen) playVariationMove(selectedSquare.x, selectedSquare.y, x, y, chosen);
+        if (chosen) {
+            if (puzzleActive) checkPuzzleGuess(selectedSquare.x, selectedSquare.y, x, y, chosen);
+            else playVariationMove(selectedSquare.x, selectedSquare.y, x, y, chosen);
+        }
         clearSquareHighlights();
         selectedSquare = null;
         currentValidMoves = [];
     }
+}
+
+// ─── PUZZLE MODE ────────────────────────────────────────────────────────────────
+function startPuzzle() {
+    if (selectedPly < 0) return;
+    const entry = report.perMove[selectedPly];
+    if (!entry.punishMove) return;
+
+    clearVariation();
+    puzzleActive = true;
+    puzzlePly = selectedPly;
+    puzzleTarget = entry.punishMove;
+    puzzleSolved = false;
+
+    document.getElementById('puzzleBanner').classList.remove('hidden');
+    document.getElementById('tryPuzzleButton').classList.add('hidden');
+    clearMoveArrow();
+    const toMoveColor = currentTurn === 'white' ? 'White' : 'Black';
+    document.getElementById('puzzleBannerText').textContent = `Find ${toMoveColor}'s best move — punish the ${entry.category.toLowerCase()}!`;
+    setCaption(`Puzzle: find ${toMoveColor}'s best move`, '#c8c8c6');
+}
+
+function checkPuzzleGuess(fromX, fromY, toX, toY, moveDetails) {
+    const correct = fromX === puzzleTarget.fromX && fromY === puzzleTarget.fromY
+        && toX === puzzleTarget.toX && toY === puzzleTarget.toY;
+
+    if (!correct) {
+        setCaption('Not quite — try again!', '#e0402c');
+        return;
+    }
+
+    puzzleSolved = true;
+    const isPawnPromo = gameState[fromY][fromX].type === 'pawn' && (toY === 0 || toY === 7);
+    const san = moveToSAN(fromX, fromY, toX, toY, moveDetails, isPawnPromo ? 'queen' : null);
+    const wasPromoting = movePiece(fromX, fromY, toX, toY, moveDetails);
+    if (wasPromoting) {
+        gameState[toY][toX].type = 'queen';
+        currentTurn = currentTurn === 'white' ? 'black' : 'white';
+    }
+    drawPieces();
+    drawMoveArrow({ x: fromX, y: fromY }, { x: toX, y: toY });
+    setCaption(`Correct! ${san} punishes it.`, '#81b64c');
+    document.getElementById('puzzleBannerText').textContent = 'Solved! Click Exit Puzzle to keep browsing.';
+}
+
+// Clears puzzle mode without navigating (selectPly already calls this too, so
+// any real move-list/graph navigation silently abandons an active puzzle, same
+// behavior as clearVariation()).
+function clearPuzzle() {
+    if (!puzzleActive) return;
+    puzzleActive = false;
+    puzzlePly = -1;
+    puzzleTarget = null;
+    puzzleSolved = false;
+    selectedSquare = null;
+    currentValidMoves = [];
+    clearSquareHighlights();
+    document.getElementById('puzzleBanner').classList.add('hidden');
 }
 
 function highlightSelection(x, y, moves) {
