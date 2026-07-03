@@ -447,7 +447,11 @@ function quiescence(alpha, beta, color, qdepth) {
 // the contempt-adjusted draw score or recurses normally. Shared by negamax's move
 // loop and the root loop in iterativeDeepen so both see the same draw-avoidance
 // behavior. Always unmakes the move before returning.
-function makeMoveAndSearch(move, depth, alpha, beta, next) {
+//
+// `childDepth` is the depth to search the resulting position at. Normally
+// `depth - 1`, but a Late Move Reduction (see negamax) passes a smaller number
+// directly for its cheap reduced-depth probe.
+function makeMoveAndSearch(move, childDepth, alpha, beta, next) {
     const undo = applySearchMove(move);
     let score;
     try {
@@ -458,7 +462,7 @@ function makeMoveAndSearch(move, depth, alpha, beta, next) {
         } else {
             searchPathCounts[key] = (searchPathCounts[key] || 0) + 1;
             try {
-                score = -negamax(depth - 1, -beta, -alpha, next, key);
+                score = -negamax(childDepth, -beta, -alpha, next, key);
             } finally {
                 searchPathCounts[key]--;
             }
@@ -469,10 +473,50 @@ function makeMoveAndSearch(move, depth, alpha, beta, next) {
     return score;
 }
 
+// ─── NULL-MOVE PRUNING ─────────────────────────────────────────────────────────
+// If letting the opponent move twice in a row (i.e. skipping this side's move
+// entirely) still fails high, the real position - where this side gets to move
+// too - is essentially certain to also fail high, so the full search of this
+// node can be skipped. This is the standard "is this position so good that even
+// a free tempo for the opponent doesn't save them" test.
+//
+// Never tried: while in check (there'd be no legal way to actually be in this
+// position after a free move), immediately after another null move (two in a
+// row just reproduces the original position - wasted work, and a known source
+// of search instability), near mate-score windows (the -50000-depth*100 mate
+// encoding isn't meaningful once a hypothetical free move is involved), or when
+// the side to move has nothing but pawns and a king (a real king-and-pawn
+// zugzwang position is exactly the case this heuristic is unsound for - "any
+// move, even a free one, only makes things worse").
+const NULL_MOVE_MIN_DEPTH = 3;
+const MATE_THRESHOLD = 49000;
+
+function hasNonPawnMaterial(color) {
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            if (p && p.color === color && p.type !== 'pawn' && p.type !== 'king') return true;
+        }
+    }
+    return false;
+}
+
+// ─── LATE MOVE REDUCTIONS ──────────────────────────────────────────────────────
+// Quiet moves ordered well after the TT move, killers, and every capture are -
+// by construction of the move ordering itself - statistically unlikely to turn
+// out best. Search them at a reduced depth with a cheap null-window probe
+// first; only pay for the full-depth re-search if that probe suggests the move
+// might actually raise alpha (i.e. it didn't fail low the way a "bad" move
+// should).
+const LMR_MIN_DEPTH = 3;
+const LMR_FULL_SEARCH_MOVES = 4; // first N ordered moves always get a full-depth search
+
 // ─── NEGAMAX WITH ALPHA-BETA + TRANSPOSITION TABLE ────────────────────────────
 // `knownKey` lets a caller that already computed this position's board key (see
 // makeMoveAndSearch) pass it in instead of paying for getBoardKey() twice.
-function negamax(depth, alpha, beta, color, knownKey) {
+// `allowNull` is false only for the recursive call inside null-move pruning
+// itself, to forbid two null moves in a row.
+function negamax(depth, alpha, beta, color, knownKey, allowNull = true) {
     nodeCount++;
     checkTime();
 
@@ -490,11 +534,30 @@ function negamax(depth, alpha, beta, color, knownKey) {
 
     if (transpositionTable.size > 500000) transpositionTable.clear();
 
+    const enemy = color === 'white' ? 'black' : 'white';
+    const kp = findKing(color);
+    const inCheck = !!(kp && isSquareAttacked(kp.x, kp.y, enemy));
+
+    if (allowNull && !inCheck && depth >= NULL_MOVE_MIN_DEPTH
+        && beta < MATE_THRESHOLD && beta > -MATE_THRESHOLD && hasNonPawnMaterial(color)) {
+        const reduction = depth > 6 ? 3 : 2;
+        const savedLastMove = lastMove;
+        const savedTurn = currentTurn;
+        lastMove = null; // no real pawn push happened, so no en-passant target
+        currentTurn = enemy;
+        let nullScore;
+        try {
+            nullScore = -negamax(depth - 1 - reduction, -beta, -beta + 1, enemy, null, false);
+        } finally {
+            lastMove = savedLastMove;
+            currentTurn = savedTurn;
+        }
+        if (nullScore >= beta) return beta;
+    }
+
     const moves = getAllValidMoves(color);
     if (moves.length === 0) {
-        const kp = findKing(color);
-        const enemy = color === 'white' ? 'black' : 'white';
-        if (kp && isSquareAttacked(kp.x, kp.y, enemy)) {
+        if (inCheck) {
             // Side to move is mated; bias toward faster mates.
             return -50000 - depth * 100;
         }
@@ -502,15 +565,31 @@ function negamax(depth, alpha, beta, color, knownKey) {
     }
 
     const ordered = orderMoves(moves, ttEntry && ttEntry.bestMove, depth, historyTable);
-    const next = color === 'white' ? 'black' : 'white';
+    const next = enemy;
     let best = -Infinity;
     let bestMove = null;
 
-    for (const move of ordered) {
+    for (let i = 0; i < ordered.length; i++) {
+        const move = ordered[i];
         const capturedBefore = gameState[move.toY][move.toX];
         const isQuiet = !capturedBefore && !(move.details && move.details.isEnPassant);
+        const isTTMove = !!(ttEntry && ttEntry.bestMove && sameMove(move, ttEntry.bestMove));
+        const killerSlot = killers[depth];
+        const isKillerMove = isQuiet && !!killerSlot && (sameMove(move, killerSlot[0]) || sameMove(move, killerSlot[1]));
 
-        const score = makeMoveAndSearch(move, depth, alpha, beta, next);
+        let score;
+        if (depth >= LMR_MIN_DEPTH && i >= LMR_FULL_SEARCH_MOVES && isQuiet
+            && !inCheck && !isTTMove && !isKillerMove) {
+            const reduction = i >= LMR_FULL_SEARCH_MOVES + 4 ? 2 : 1;
+            const reducedDepth = Math.max(0, depth - 1 - reduction);
+            score = makeMoveAndSearch(move, reducedDepth, alpha, alpha + 1, next);
+            if (score > alpha) {
+                // The cheap probe didn't fail low as expected - re-verify at full depth.
+                score = makeMoveAndSearch(move, depth - 1, alpha, beta, next);
+            }
+        } else {
+            score = makeMoveAndSearch(move, depth - 1, alpha, beta, next);
+        }
 
         if (score > best) { best = score; bestMove = move; }
         if (best > alpha) {
@@ -655,7 +734,7 @@ function iterativeDeepen(color, timeBudgetMs, maxDepth, evalNoise = 0) {
             const ordered = orderMoves(rootMoves, prevBest, depth, historyTable);
 
             for (const move of ordered) {
-                const score = makeMoveAndSearch(move, depth, alpha, beta, next);
+                const score = makeMoveAndSearch(move, depth - 1, alpha, beta, next);
 
                 // Jitter only affects which move is picked, not the alpha window,
                 // so it can't distort pruning of the remaining sibling searches.

@@ -250,6 +250,76 @@ All bug-fix, redesign, and AI Boost Plan items are complete. The Game Analysis E
 worker, dedicated review page, on-board ratings, "what if" branching with move arrows, and move-quality
 glyphs — is fully implemented.
 
+Session 22 implemented **null-move pruning + late move reductions (LMR)** — item 3 from Session 21's
+own prioritized follow-up list ("the real remaining lever" for AI strength, expected to be worth a few
+hundred Elo rather than item 1's +40 — but also flagged as the riskiest item, needing real
+tactical-blindness/zugzwang testing before trusting it, not just a legality cross-check):
+- **Null-move pruning** (`ai.js`): at any `negamax` node not in check, with `depth >= NULL_MOVE_MIN_DEPTH`
+  (3), a non-mate-score `beta` window, and the side to move having at least one piece besides pawns/king
+  (`hasNonPawnMaterial()`), the search gives the opponent a free move (flips `currentTurn`, clears
+  `lastMove` so no phantom en-passant target leaks in, no piece actually moves) and searches that at a
+  reduced depth (`R = depth > 6 ? 3 : 2`) with a null window around `beta`. If even a free tempo for the
+  opponent still fails high, the real position (where this side gets to move too) is essentially certain
+  to also fail high, so the full-width search of this node is skipped entirely. `allowNull` (new `negamax`
+  parameter, default `true`, passed `false` on the recursive call inside the null-move probe itself)
+  forbids two null moves in a row — otherwise the second null move just reproduces the original position,
+  wasted work and a known source of search instability. The zugzwang guard (`hasNonPawnMaterial`) is the
+  load-bearing safety check: a real king-and-pawn endgame is exactly the position type where "any move,
+  even a free one, only makes things worse," which is precisely what this heuristic assumes can't happen.
+- **Late move reductions** (`ai.js`, same `negamax` move loop): quiet moves ordered after the TT move,
+  killers, and every capture (`i >= LMR_FULL_SEARCH_MOVES` = 4, at `depth >= LMR_MIN_DEPTH` = 3, only when
+  not in check and not the TT/killer move) are first probed at a reduced depth (`i >= 8` → reduce 2 plies,
+  else 1) with a null window around `alpha`. Only if that cheap probe suggests the move might actually raise
+  alpha (`score > alpha`, i.e. it didn't fail low the way a "bad," late-ordered move is expected to) does the
+  search pay for a full-depth re-search at the real `(alpha, beta)` window. `makeMoveAndSearch`'s signature
+  changed from taking the parent `depth` (and internally computing `depth - 1`) to taking the child's
+  `childDepth` directly, since LMR's reduced probe and full re-search need different child depths from the
+  same call site — both `negamax`'s move loop and the root loop in `iterativeDeepen` updated to pass
+  `depth - 1` explicitly.
+- **Verification methodology** (mirroring Session 21's "diagnose with real profiling/testing, don't blind-
+  tune" standard, and directly answering the TODO's own "needs zugzwang/tactical testing before trusting
+  it" requirement): loaded `engine.js`/`notation.js`/`ai.js` into a Node `vm` sandbox, with a string-level
+  patch (`NULL_MOVE_MIN_DEPTH`/`LMR_MIN_DEPTH` forced to 999 in an otherwise-identical copy of the real
+  source, never touching the shipped file) to get an old-behavior baseline for A/B comparison without a
+  permanent feature flag in the codebase.
+  - **Zugzwang guard, directly unit-tested**: `hasNonPawnMaterial('white')` returns `false` in a
+    constructed pure king-and-pawn position (confirming null-move is skipped there) and `true` once a
+    knight is added. A full `iterativeDeepen` search from that same king-and-pawn position to depth 10
+    completes cleanly with a sensible king move and a plausible score - no crash, no corrupted state.
+  - **State-integrity check**: constructed a position with a genuine en-passant capture available (a
+    simulated just-played two-square pawn push), ran a real depth-8 search (deep enough to trigger
+    null-move pruning many times over), and confirmed `lastMove`/`currentTurn` and the en-passant capture's
+    availability were bit-for-bit unchanged afterward - the temporary mutation inside the null-move probe
+    is fully restored by its `try/finally`, exactly as designed.
+  - **Tactical-blindness check**: two constructed forced-mate positions (a back-rank mate-in-1, and a
+    queen+rook mate-in-2 against a bare king) - both the old (pruning disabled) and new (full) search found
+    the identical mating move at identical scores. No missed forced tactic in either test.
+  - **Node-count / speed measurement**: from an identical 10-ply Ruy Lopez position (built independently in
+    each variant's own sandbox via the existing `sanToMove`/`movePiece`, not search-dependent, so all
+    variants start from the exact same board), ran matched untimed searches at depths 5-7. The combined
+    (null-move + LMR) search found the **exact same best move and score** as the unpruned baseline at every
+    depth the baseline could finish (depth 5: 109,170 → 38,695 nodes; depth 6: 338,533 → 72,143 nodes, 28.4s
+    → 2.3s). At depth 7 the unpruned baseline couldn't finish within a 60-second cap at all, while the
+    combined search finished in 6.1s with a score matching the depth-5/6 answer exactly - strong indirect
+    evidence the deeper answer is also correct, on top of the direct depth 5/6 matches.
+  - **Head-to-head match, same protocol as Session 21's item-1 match**: 16 games, OLD (pruning disabled)
+    vs. NEW (null-move + LMR enabled) engine, alternating colors across 8 varied opening prefixes,
+    deterministic (`evalNoise = 0`), 400ms/move, 140-ply cap, both engines' boards kept in lockstep by
+    applying every chosen move to both sandboxes regardless of which one's search picked it. Result: **NEW
+    engine 10/16, OLD 6/16** - decided mostly by real checkmates, not just draws/timeouts - a 62.5% score
+    translating to roughly **+89 Elo** (wide error bars given the small sample, exactly as expected for 16
+    games - see Session 21's identical caveat for its own +40 Elo estimate). This lands in the direction and
+    rough order of magnitude Session 21 predicted ("plausibly a few hundred Elo, not another +40" - a wider,
+    more decisive gain than the `isSquareAttacked` speedup alone, though a full confirmation of "a few
+    hundred" specifically would need a much larger sample than is practical to run per-session).
+  - **Live verification in the preview browser**: ran a full Master-difficulty AI vs AI game end-to-end
+    (28 move-pairs) with the new search active - both sides castled, played real tactics (a piece sacrifice
+    on e6, a queen infiltration, checks traded near the endgame), and the game concluded normally with zero
+    console errors throughout.
+- **Not done this session**: Zobrist hashing (item 4 on Session 21's list) and re-aligning
+  `ANALYSIS_DEPTH`/`ANALYSIS_TIME_MS` (item 5) remain exactly as Session 21 judged them - smaller tune-ups,
+  lower priority than this session's pruning work, still open for later.
+
 Session 21 investigated **the "AI needs more buffing" question flagged (not started) at the end of
 Session 20** — diagnosed with real profiling instead of guessing, per that session's own instruction not
 to tune constants blind:
