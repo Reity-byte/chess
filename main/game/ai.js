@@ -734,10 +734,27 @@ function iterativeDeepen(color, timeBudgetMs, maxDepth, evalNoise = 0) {
             const ordered = orderMoves(rootMoves, prevBest, depth, historyTable);
 
             for (const move of ordered) {
-                const score = makeMoveAndSearch(move, depth - 1, alpha, beta, next);
+                // Once `alpha` has been raised by an earlier sibling, searching the
+                // next move in the same (alpha, beta) window only proves "is this
+                // move at least as good as alpha" - if it isn't, alpha-beta is free
+                // to return any value that's merely <= alpha rather than the move's
+                // real score (that's the entire point of the pruning). A strict `>`
+                // comparison against the running best can never be fooled by that,
+                // so it's safe and fast when evalNoise is 0 (Master). But the
+                // moment jitter is added, a bounded/cut-off "score" - which, thanks
+                // to how quiescence/negamax's fail-hard returns propagate, often
+                // comes back numerically equal to whatever it was asked to beat,
+                // e.g. an unrelated pawn push reporting the same score as a mate
+                // found by an earlier sibling - gets treated as a real, competing
+                // value. That let random noise "pick" moves that were never
+                // actually evaluated as good, not just moves that were merely
+                // close to best. So every difficulty that actually uses noise
+                // needs each move's real, exact score to jitter against; only
+                // noise-free Master can safely keep tightening alpha across
+                // siblings for speed.
+                const searchAlpha = evalNoise > 0 ? -Infinity : alpha;
+                const score = makeMoveAndSearch(move, depth - 1, searchAlpha, beta, next);
 
-                // Jitter only affects which move is picked, not the alpha window,
-                // so it can't distort pruning of the remaining sibling searches.
                 const jittered = evalNoise > 0 ? score + (Math.random() * 2 - 1) * evalNoise : score;
                 if (jittered > currentBestJittered) {
                     currentBestJittered = jittered;
