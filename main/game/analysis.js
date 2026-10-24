@@ -6,17 +6,19 @@
 
 // Bump whenever the report format or the classification rules change, so cached
 // reports from older versions are recomputed instead of reused.
-const ANALYSIS_VERSION = 4;
+const ANALYSIS_VERSION = 5;
 
 // Engine score encoding (matches ai.js): mates are ±(EVAL_MATE - plies to mate).
 const EVAL_MATE = 100000;
 const EVAL_MATE_BOUND = EVAL_MATE - 1000;
 
-// Analysis strength presets: per-position time budget and depth cap.
+// Analysis strength presets: per-position time budget and depth cap. Positions
+// are spread over several workers (one per spare core), so these are per
+// position, not per game.
 const ANALYSIS_MODES = {
-    quick:    { label: 'Quick',    timeMs: 150,  maxDepth: 10 },
-    standard: { label: 'Standard', timeMs: 450,  maxDepth: 14 },
-    deep:     { label: 'Deep',     timeMs: 1200, maxDepth: 20 },
+    quick:    { label: 'Quick',    timeMs: 300,  maxDepth: 12 },
+    standard: { label: 'Standard', timeMs: 1200, maxDepth: 18 },
+    deep:     { label: 'Deep',     timeMs: 3000, maxDepth: 24 },
 };
 
 // Thresholds are win-PROBABILITY-POINT loss (0-100), not raw centipawns: in an

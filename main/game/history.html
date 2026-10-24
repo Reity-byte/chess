@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>History · Chess</title>
+    <link rel="stylesheet" href="../theme.css?v=9">
+    <link rel="stylesheet" href="game.css?v=9">
+    <script src="history-store.js?v=9" defer></script>
+    <script src="history-page.js?v=9" defer></script>
+</head>
+<body>
+
+    <header class="topbar">
+        <a class="brand" href="../site.html">
+            <span class="brand-mark"><span class="piece-icon white knight"></span></span>
+            <span class="brand-name">Chess</span>
+        </a>
+        <nav class="topnav">
+            <a href="game.html">Play</a>
+            <a href="analysis.html">Review</a>
+            <a href="puzzles.html">Puzzles</a>
+            <a href="history.html" class="active">History</a>
+        </nav>
+    </header>
+
+    <main class="history-page">
+        <section class="panel rating-card">
+            <div class="rating-head">
+                <div>
+                    <div class="eyebrow">Your rating</div>
+                    <div class="rating-big" id="ratingNow">800</div>
+                    <div class="muted" id="ratingSub">Play a game against the engine to get rated.</div>
+                </div>
+                <div class="rating-facts">
+                    <div><span class="eyebrow">Peak</span><strong id="ratingPeak">–</strong></div>
+                    <div><span class="eyebrow">Rated games</span><strong id="ratingGames">0</strong></div>
+                    <div><span class="eyebrow">Record</span><strong id="ratingRecord">–</strong></div>
+                </div>
+            </div>
+            <div class="graph-wrap">
+                <svg class="rating-graph" id="ratingGraph" role="img" aria-label="Rating over time"></svg>
+                <div class="graph-tip hidden" id="ratingTip"></div>
+            </div>
+        </section>
+
+        <section class="stat-cards">
+            <div class="panel stat-card"><span class="eyebrow">As White</span><strong id="statWhite">–</strong><span class="muted" id="statWhiteSub"></span></div>
+            <div class="panel stat-card"><span class="eyebrow">As Black</span><strong id="statBlack">–</strong><span class="muted" id="statBlackSub"></span></div>
+            <div class="panel stat-card"><span class="eyebrow">Average accuracy</span><strong id="statAccuracy">–</strong><span class="muted" id="statAccuracySub">from reviewed games</span></div>
+            <div class="panel stat-card"><span class="eyebrow">Most common error</span><strong id="statMotif" class="small">–</strong><span class="muted" id="statMotifSub">from reviewed games</span></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">Games
+                <div class="segmented" id="historyFilter" style="margin-left:auto; padding:3px">
+                    <button data-filter="all" class="selected" style="height:28px">All</button>
+                    <button data-filter="human" style="height:28px">vs Engine</button>
+                    <button data-filter="ai" style="height:28px">Engine vs Engine</button>
+                </div>
+            </div>
+            <div class="games-list" id="gamesList"></div>
+            <div class="panel-footer">
+                <a class="btn btn-primary" href="game.html">Play a game</a>
+                <button class="btn btn-ghost" id="clearHistoryButton" style="margin-left:auto">Clear history</button>
+            </div>
+        </section>
+    </main>
+
+</body>
+</html>

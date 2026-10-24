@@ -26,8 +26,10 @@ const MIN_RATED_PLIES = 4;     // games aborted before this many moves don't cou
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
 // Setup choices; level / whiteLevel / blackLevel are ENGINE_LEVELS indices.
+// First visit: the opponent nearest your rating; engines watch at a strong level.
 const settings = Object.assign(
-    { mode: 'human', color: 'white', time: 'unlimited', level: 5, whiteLevel: 10, blackLevel: 10 },
+    { mode: 'human', color: 'white', time: 'unlimited', level: nearestEngineLevel(playerRating().rating),
+      whiteLevel: ENGINE_LEVELS.length - 4, blackLevel: ENGINE_LEVELS.length - 4 },
     loadJSON(SETUP_KEY) || {});
 
 let gameMode = 'human';     // 'human' (vs engine) | 'ai' (engine vs engine)
@@ -35,6 +37,7 @@ let playerColor = 'white';  // the human's color (orientation reference in AI vs
 let engineLevels = { white: null, black: null }; // level index per engine-controlled color
 let rated = false;          // vs-engine games count toward your rating unless a takeback is used
 let ratingChange = null;    // { before, after, delta } once a rated game has ended
+let lastGameId = null;      // history id of the game that just ended (for the review link)
 let timeControl = 'unlimited';
 let isFlipped = false;
 
@@ -121,7 +124,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=8');
+            this.worker = new Worker('ai-worker.js?v=9');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -330,6 +333,7 @@ function startGame(resumeData) {
         timeControl = settings.time;
     }
     ratingChange = null;
+    lastGameId = null;
     isFlipped = playerColor === 'black';
 
     const resumeSAN = resumeData ? rowsToSAN(resumeData.moveHistory) : [];
@@ -455,6 +459,8 @@ function endGame(status) {
     playGameOverSound();
     gameResult = status.result;
     board.setInteractive(false);
+    // Names (with ratings) as they stood while the game was played.
+    const names = { white: fullPlayerName('white'), black: fullPlayerName('black') };
     if (rated && gameMode === 'human' && status.result !== '*') {
         if (sanList().length >= MIN_RATED_PLIES) {
             const score = status.result === '1/2-1/2' ? 0.5 : (status.result === '1-0') === (playerColor === 'white') ? 1 : 0;
@@ -462,6 +468,15 @@ function endGame(status) {
         }
         rated = false; // never count the same game twice
     }
+    const sans = sanList();
+    lastGameId = sans.length ? addGameToHistory({
+        mode: gameMode, playerColor: gameMode === 'human' ? playerColor : null,
+        white: names.white, black: names.black,
+        engineRatings: { white: levelOf('white')?.rating ?? null, black: levelOf('black')?.rating ?? null },
+        result: status.result, reason: status.message, plies: sans.length, sanMoves: sans,
+        timeControl, rated: !!ratingChange,
+        ratingBefore: ratingChange ? ratingChange.before : null, ratingAfter: ratingChange ? ratingChange.after : null,
+    }) : null;
     updatePlayers();
     updateStatus(status);
     updateClockDisplay();
@@ -750,6 +765,7 @@ function openReview() {
             white: fullPlayerName('white').replace(/^You .*/, 'You'),
             black: fullPlayerName('black').replace(/^You .*/, 'You'),
             result: gameActive ? '*' : gameResult,
+            historyId: gameActive ? null : lastGameId,
         }));
     } catch (e) { showToast('Could not hand the game to the review page.'); return; }
     location.href = 'analysis.html';

@@ -468,6 +468,72 @@
 }
 .pgn-input:focus { outline: none; border-color: var(--accent); }
 
+/* Key moments (review page) */
+.moments { display: flex; flex-direction: column; padding: 6px; }
+.moment {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+.moment:hover { background: var(--surface-2); }
+.moment .mv-icon { margin-top: 2px; }
+.moment-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.moment-title { font-weight: 700; font-size: 14px; }
+.moment-title .faint { font-weight: 500; font-size: 12px; }
+.moment-text { font-size: 13px; color: var(--text-dim); }
+.moment-eval { font: 700 12px var(--mono); color: var(--text-faint); white-space: nowrap; }
+.caption-line .reason { color: var(--text); font-weight: 600; }
+
+/* ─── HISTORY PAGE ───────────────────────────────────────────────────────────── */
+.history-page { display: flex; flex-direction: column; gap: 14px; max-width: 980px; margin: 0 auto; padding: 20px 20px 36px; }
+.rating-head { display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-between; padding: 20px 20px 4px; }
+.rating-big { font: 800 44px/1.1 var(--mono); margin: 4px 0; }
+.rating-facts { display: flex; gap: 22px; align-items: flex-end; }
+.rating-facts > div { display: flex; flex-direction: column; gap: 4px; }
+.rating-facts strong { font: 700 18px var(--mono); }
+.rating-graph { display: block; width: 100%; height: 160px; }
+.rating-graph .grid { stroke: var(--border-strong); stroke-dasharray: 3 4; }
+.rating-graph .axis { fill: var(--text-faint); font: 600 11px var(--mono); }
+.rating-graph .area { fill: var(--accent-soft); }
+.rating-graph .line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
+.rating-graph .dot { stroke: var(--surface); stroke-width: 1.5; }
+.rating-graph .dot.win { fill: var(--accent); }
+.rating-graph .dot.loss { fill: var(--danger); }
+.rating-graph .dot.draw { fill: var(--text-dim); }
+.rating-graph .graph-empty { fill: var(--text-faint); font: 500 13px var(--font); }
+.stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.stat-card { display: flex; flex-direction: column; gap: 4px; padding: 16px; }
+.stat-card strong { font: 800 26px var(--mono); }
+.stat-card strong.small { font: 800 17px var(--font); padding: 5px 0; }
+.stat-card .muted { font-size: 12px; }
+.games-list { display: flex; flex-direction: column; padding: 6px; }
+.game-row { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 10px; }
+.game-row:hover { background: var(--surface-2); }
+.game-row .btn { height: 32px; padding: 0 12px; font-size: 13px; }
+.result-badge { min-width: 52px; padding: 5px 0; border-radius: 7px; text-align: center; font: 800 12px var(--font); }
+.result-badge.win { background: var(--accent-soft); color: var(--accent); }
+.result-badge.loss { background: var(--danger-soft); color: var(--danger); }
+.result-badge.draw, .result-badge.neutral { background: var(--surface-3); color: var(--text-dim); }
+.game-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.game-title { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.game-sub { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.game-acc, .game-delta { font: 700 13px var(--mono); min-width: 54px; text-align: right; color: var(--text-dim); }
+.game-delta.up { color: var(--accent); }
+.game-delta.down { color: var(--danger); }
+.turn-swatch.tiny { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 7px; vertical-align: 0; }
+@media (max-width: 640px) {
+    .game-acc { display: none; }
+    .game-row { gap: 8px; padding: 8px 4px; }
+}
+
 /* ─── PUZZLES PAGE ───────────────────────────────────────────────────────────── */
 .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); }
 .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 16px 8px; }

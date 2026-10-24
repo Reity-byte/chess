@@ -11,7 +11,7 @@
 // comparing two searches of different depth. The next position's search then
 // supplies the eval graph point after the move and the opponent's best reply
 // (the "punish" move for puzzles). Results stream back move by move.
-importScripts('engine.js?v=8', 'ai.js?v=8', 'notation.js?v=8', 'openings.js?v=8', 'analysis.js?v=8');
+importScripts('engine.js?v=9', 'ai.js?v=9', 'notation.js?v=9', 'openings.js?v=9', 'analysis.js?v=9');
 
 // "What if" exploration always searches at full strength, whatever difficulty
 // the original game was played at.
@@ -203,16 +203,158 @@ function phaseAccuracy(perMove) {
     return out;
 }
 
-// ─── FULL-GAME ANALYSIS ────────────────────────────────────────────────────────
-function runAnalysis(sanMoves, modeKey) {
-    const mode = ANALYSIS_MODES[modeKey] || ANALYSIS_MODES.standard;
+// ─── EXPLANATIONS ("why was this a mistake?") ──────────────────────────────────
+// Turns the engine's verdict into a concrete reason by replaying its lines on
+// the real board: mates allowed or missed, material that goes or could have
+// been won, and forks behind either. Returns { motif, text } or null; the board
+// is always restored to the position after the move.
+const EXPLAIN_MIN_LOSS = 5;      // win% loss from which an error gets explained
+const EXPLAIN_MATERIAL = 150;    // cp swing that counts as winning/losing material
+const LINE_PLIES = 3;            // how far along a line material is counted
+
+function squareName(x, y) { return FILE_NAMES[x] + (8 - y); }
+
+function materialWord(cp) {
+    if (cp >= 800) return 'the queen';
+    if (cp >= 450) return 'a rook';
+    if (cp >= 250) return 'a piece';
+    if (cp >= 150) return 'material';
+    return 'a pawn';
+}
+
+// Plays up to `plies` SAN moves of `line` from the current position and
+// returns the material change for `color` (stops early at a finished game).
+function lineMaterialDelta(line, color, plies) {
+    const before = materialBalance(color);
+    for (let k = 0; k < Math.min(plies, line.length); k++) {
+        const r = resolveSAN(currentTurn, line[k]);
+        if (!r) break;
+        applyMoveWithPromotion(r.move, r.promo);
+        if (!hasAnyLegalMove(currentTurn)) break;
+    }
+    return materialBalance(color) - before;
+}
+
+// Enemy pieces the piece on (x, y) attacks that are worth forking: the king,
+// anything more valuable than the attacker, or anything undefended. (Move
+// generation lists the enemy king's square too when the piece gives check.)
+function forkTargets(x, y) {
+    const piece = gameState[y][x];
+    if (!piece) return [];
+    const enemy = piece.color === 'white' ? 'black' : 'white';
+    const mine = PIECE_VALUES[piece.type];
+    const out = [];
+    for (const m of getvalidMoves(x, y)) {
+        const t = gameState[m.y][m.x];
+        if (!t || t.color !== enemy || t.type === 'pawn') continue;
+        const worth = t.type === 'king' || PIECE_VALUES[t.type] > mine || !isSquareAttacked(m.x, m.y, enemy);
+        if (worth) out.push(t.type);
+    }
+    out.sort((a, b) => PIECE_VALUES[b] - PIECE_VALUES[a]); // king first
+    return [...new Set(out)];
+}
+
+function forkText(targets) {
+    const named = targets.slice(0, 2).map(t => `the ${t}`);
+    return named.join(' and ');
+}
+
+// A fork only counts if it pays off: following the engine line after it (the
+// opponent's reply, then the forker's follow-up), the forking side must win at
+// least EXPLAIN_MATERIAL on top of anything the forking move itself took.
+// Attacking two pieces that are both safe is not a fork worth naming.
+function forkPaysOff(side, lineAfter) {
+    return lineMaterialDelta(lineAfter, side, 2) >= EXPLAIN_MATERIAL;
+}
+
+// Plays `move` from the current position; returns the fork targets of the moved
+// piece if it is a fork that pays off along `lineAfter`, else []. The board is
+// NOT restored.
+function forkAfter(move, lineAfter) {
+    const legal = getvalidMoves(move.fromX, move.fromY).find(m => m.x === move.toX && m.y === move.toY);
+    if (!legal) return [];
+    const side = gameState[move.fromY][move.fromX].color;
+    applyMoveWithPromotion({ ...move, details: legal }, move.promo || null);
+    const targets = forkTargets(move.toX, move.toY);
+    return targets.length >= 2 && forkPaysOff(side, lineAfter) ? targets : [];
+}
+
+// ctx: { i, resolved, color, move, bestScore, playedScore, winLoss, isBest,
+//        best (line entry), current (search of the position before), next
+//        (search after), materialBefore }
+function explainMove(ctx) {
+    const { i, resolved, color, move, best, current, next } = ctx;
+    const backToAfter = () => restorePosition(resolved, i + 1);
+    const backToBefore = () => restorePosition(resolved, i);
+
+    if (ctx.winLoss < EXPLAIN_MIN_LOSS) {
+        // A good move: only call out a fork it creates (one that actually wins
+        // something — and a mating move is simply mate).
+        if (ctx.winLoss > ANALYSIS_THRESHOLDS.excellent || !hasAnyLegalMove(currentTurn)) return null;
+        const targets = forkTargets(move.toX, move.toY);
+        if (targets.length < 2) return null;
+        const pays = forkPaysOff(color, next.pv);
+        backToAfter();
+        return pays ? { motif: 'fork', text: `Forks ${forkText(targets)}.` } : null;
+    }
+
+    // 1. Mates.
+    if (next.score >= EVAL_MATE_BOUND) {
+        const n = mateInMoves(next.score);
+        return { motif: 'allowsMate', text: `Allows mate in ${n}${next.pv.length ? ` (${next.pv.slice(0, 2 * n - 1).join(' ')})` : ''}.` };
+    }
+    if (ctx.bestScore >= EVAL_MATE_BOUND && ctx.playedScore < EVAL_MATE_BOUND && best) {
+        return { motif: 'missedMate', text: `Misses mate in ${mateInMoves(ctx.bestScore)} starting with ${best.san}.` };
+    }
+
+    // 2. Material the opponent's best reply wins (we're at the position after the
+    //    move). `lost` is net of anything the move itself captured.
+    const punish = next.lines[0];
+    const moveGain = materialBalance(color) - ctx.materialBefore;
+    let lost = -moveGain, punishFork = [];
+    if (punish) {
+        lost = -(moveGain + lineMaterialDelta(next.pv, color, LINE_PLIES - 1));
+        backToAfter();
+        punishFork = forkAfter(punish.move, next.pv.slice(1));
+        backToAfter();
+    }
+    if (punish && lost >= EXPLAIN_MATERIAL) {
+        if (punishFork.length) return { motif: 'allowsFork', text: `Allows ${punish.san}, forking ${forkText(punishFork)}.` };
+        const target = gameState[punish.move.toY][punish.move.toX];
+        if (target && target.color === color && target.type !== 'pawn' && lost >= PIECE_VALUES[target.type] - 100) {
+            return { motif: 'hangs', text: `Hangs the ${target.type} on ${squareName(punish.move.toX, punish.move.toY)} — ${punish.san} wins it.` };
+        }
+        return { motif: 'losesMaterial', text: `Loses ${materialWord(lost)} after ${punish.san}.` };
+    }
+
+    // 3. Material the best move would have won (from the position before the move).
+    if (best && !ctx.isBest) {
+        backToBefore();
+        const gained = lineMaterialDelta(current.pv, color, LINE_PLIES);
+        backToBefore();
+        const bestFork = forkAfter(best.move, current.pv.slice(1));
+        backToAfter();
+        if (bestFork.length && gained - Math.max(0, -lost) >= EXPLAIN_MATERIAL - 50) {
+            return { motif: 'missedFork', text: `Misses the fork ${best.san}, hitting ${forkText(bestFork)}.` };
+        }
+        if (gained + lost >= EXPLAIN_MATERIAL && gained >= EXPLAIN_MATERIAL) {
+            return { motif: 'missedWin', text: `Misses ${best.san}, which wins ${materialWord(gained)}.` };
+        }
+    }
+    return null;
+}
+
+// ─── GAME ANALYSIS: RANGES + FINAL REPORT ──────────────────────────────────────
+// A game can be analyzed in pieces: analyzeRange() handles the moves
+// [from, to) — searching positions from..to, the last one being the position
+// after move to-1 — and the review page runs several ranges in parallel, one
+// per worker. finalizeReport() then puts the moves back in order, settles the
+// one classification rule that looks at the previous move ("Miss" needs the
+// opponent's error size), and computes accuracy and totals.
+
+// Resolves the whole game up front so a bad PGN fails fast with a clear message.
+function resolveGame(sanMoves) {
     resetGame();
-    recordPosition();
-    clearSearchMemory();
-
-    const opening = identifyOpening(sanMoves, OPENING_BOOK.map(l => l.moves));
-
-    // Resolve every move up front so a bad PGN fails fast with a clear message.
     const resolved = [];
     for (let i = 0; i < sanMoves.length; i++) {
         const r = resolveSAN(currentTurn, sanMoves[i]);
@@ -220,19 +362,24 @@ function runAnalysis(sanMoves, modeKey) {
         resolved.push(r);
         applyMoveWithPromotion(r.move, r.promo);
     }
-    const total = resolved.length;
-    resetGame();
-    recordPosition();
+    return resolved;
+}
 
-    self.postMessage({ type: 'start', total, opening: opening.name, mode: modeKey });
+// Analyzes moves [from, to). Each finished move is passed to `onMove(entry,
+// startEval)` (startEval only known to the range that starts at 0). Entries
+// carry `inputs`, the classification facts finalizeReport() re-classifies from.
+function analyzeRange(sanMoves, from, to, modeKey, onMove) {
+    const mode = ANALYSIS_MODES[modeKey] || ANALYSIS_MODES.standard;
+    const opening = identifyOpening(sanMoves, OPENING_BOOK.map(l => l.moves));
+    const resolved = resolveGame(sanMoves);
+    to = Math.min(to, resolved.length);
+    restorePosition(resolved, from);
 
-    const perMove = [];
-    let current = searchPosition(mode, resolved[0] || null);
-    const startEval = current.score; // White to move at the start
-    const whiteWin = [winProbability(startEval)];
-    let depthSum = current.depth, depthCount = 1;
+    let current = searchPosition(mode, resolved[from] || null);
+    const startEval = from === 0 ? current.score : null; // White to move at the start
+    const entries = [];
 
-    for (let i = 0; i < total; i++) {
+    for (let i = from; i < to; i++) {
         const color = currentTurn;
         const sign = color === 'white' ? 1 : -1;
         const { move, promo } = resolved[i];
@@ -242,14 +389,14 @@ function runAnalysis(sanMoves, modeKey) {
         const bestScore = current.score;
         const playedScore = isBest ? bestScore : current.includedScore;
         const second = current.lines[1] || null;
-        const prev = perMove[i - 1];
-        const isRecapture = !!prev && prev.captured > 0 && prev.to.x === move.toX && prev.to.y === move.toY;
+        // A recapture: the previous move captured on the square this move lands on.
+        const prevMove = i > 0 ? resolved[i - 1].move : null;
+        const isRecapture = !!prevMove && sanMoves[i - 1].includes('x') && prevMove.toX === move.toX && prevMove.toY === move.toY;
 
         const measured = playAndMeasure(move, promo, color);
         const { captured, deliversMate } = measured;
 
-        const next = i + 1 < total ? searchPosition(mode, resolved[i + 1]) : searchFinalPosition(mode);
-        depthSum += next.depth; depthCount++;
+        const next = i + 1 < resolved.length ? searchPosition(mode, resolved[i + 1]) : searchFinalPosition(mode);
 
         let sacrifice = measured.sacrifice, sacrificeMates = false;
         if (sacrifice >= SACRIFICE_MIN) {
@@ -261,18 +408,21 @@ function runAnalysis(sanMoves, modeKey) {
         const winBest = winProbability(bestScore);
         const winPlayed = winProbability(playedScore);
         const winLoss = Math.max(0, winBest - winPlayed);
-        const category = classify({
+        // Book and forced moves aren't the player's judgement: nothing to explain.
+        const why = i < opening.bookPlies || current.legalCount === 1 ? null : explainMove({
+            i, resolved, color, move, bestScore, playedScore, winLoss, isBest, best, current, next,
+            materialBefore: measured.materialBefore,
+        });
+        const inputs = {
             legalCount: current.legalCount, inBook: i < opening.bookPlies, isBest,
             winBest, winPlayed, winLoss, winSecond: second ? winProbability(second.score) : null,
-            sacrifice, sacrificeMates, prevLoss: prev ? prev.winLoss : 0, isRecapture, deliversMate,
-        });
-
-        // Eval after the move comes from the next position's own (deeper) search.
-        const evalAfterWhite = -sign * next.score;
-        whiteWin.push(winProbability(evalAfterWhite));
+            sacrifice, sacrificeMates, isRecapture, deliversMate,
+        };
+        const prevLoss = entries.length ? entries[entries.length - 1].winLoss : 0; // provisional at a range start
+        const evalAfterWhite = -sign * next.score; // from the next position's own (deeper) search
 
         const entry = {
-            ply: i, color, san: sanMoves[i], category, phase,
+            ply: i, color, san: sanMoves[i], category: classify({ ...inputs, prevLoss }), phase, inputs,
             from: { x: move.fromX, y: move.fromY }, to: { x: move.toX, y: move.toY },
             details: move.details, promo,
             winBest: round1(winBest), winPlayed: round1(winPlayed), winLoss: round1(winLoss),
@@ -284,17 +434,29 @@ function runAnalysis(sanMoves, modeKey) {
             punishMove: next.lines.length ? { ...next.lines[0].move, san: next.lines[0].san } : null,
             punishLine: next.pv,
             sacrifice, captured,
+            reason: why ? why.text : null,
+            motif: why ? why.motif : null,
             depth: current.depth,
         };
-        perMove.push(entry);
-        self.postMessage({ type: 'move', entry, startEval });
+        entries.push(entry);
+        onMove(entry, startEval);
         current = next;
     }
+    return { entries, startEval, opening };
+}
 
-    const accuracy = computeAccuracy(perMove, whiteWin);
+// Orders the entries, re-classifies each with its predecessor's loss, and
+// builds the report.
+function finalizeReport(entries, startEval, sanMoves, modeKey) {
+    const perMove = entries.slice().sort((a, b) => a.ply - b.ply);
+    perMove.forEach((m, i) => {
+        m.category = classify({ ...m.inputs, prevLoss: i > 0 ? perMove[i - 1].winLoss : 0 });
+    });
+    const opening = identifyOpening(sanMoves, OPENING_BOOK.map(l => l.moves));
+    const whiteWin = [winProbability(startEval)].concat(perMove.map(m => winProbability(m.evalAfter)));
     const counts = { white: {}, black: {} };
     for (const m of perMove) counts[m.color][m.category] = (counts[m.color][m.category] || 0) + 1;
-
+    const depths = perMove.map(m => m.depth);
     return {
         version: ANALYSIS_VERSION,
         mode: modeKey,
@@ -303,11 +465,21 @@ function runAnalysis(sanMoves, modeKey) {
         startEval,
         perMove,
         evalGraph: perMove.map(m => m.evalAfter),
-        accuracy,
+        accuracy: computeAccuracy(perMove, whiteWin),
         phaseAccuracy: phaseAccuracy(perMove),
         counts,
-        avgDepth: Math.round(depthSum / depthCount * 10) / 10,
+        avgDepth: depths.length ? Math.round(depths.reduce((a, b) => a + b, 0) / depths.length * 10) / 10 : 0,
     };
+}
+
+// Whole game on this one worker (tests, and browsers without spare cores).
+function runAnalysis(sanMoves, modeKey) {
+    clearSearchMemory();
+    const opening = identifyOpening(sanMoves, OPENING_BOOK.map(l => l.moves));
+    self.postMessage({ type: 'start', total: sanMoves.length, opening: opening.name, mode: modeKey });
+    const { entries, startEval } = analyzeRange(sanMoves, 0, sanMoves.length, modeKey,
+        (entry, start) => self.postMessage({ type: 'move', entry, startEval: start }));
+    return finalizeReport(entries, startEval, sanMoves, modeKey);
 }
 
 // The game's last position: a finished game (mate/stalemate/draw rule) gets its
@@ -396,6 +568,17 @@ self.onmessage = function (e) {
     try {
         if (data.type === 'analyze') {
             const report = runAnalysis(data.sanMoves, data.mode || 'standard');
+            self.postMessage({ type: 'done', report });
+        } else if (data.type === 'analyzeRange') {
+            if (data.from === 0) {
+                const opening = identifyOpening(data.sanMoves, OPENING_BOOK.map(l => l.moves));
+                self.postMessage({ type: 'start', total: data.sanMoves.length, opening: opening.name, mode: data.mode });
+            }
+            analyzeRange(data.sanMoves, data.from, data.to, data.mode || 'standard',
+                (entry, startEval) => self.postMessage({ type: 'move', entry, startEval }));
+            self.postMessage({ type: 'rangeDone', rangeId: data.rangeId });
+        } else if (data.type === 'finalize') {
+            const report = finalizeReport(data.entries, data.startEval, data.sanMoves, data.mode || 'standard');
             self.postMessage({ type: 'done', report });
         } else if (data.type === 'explore') {
             const result = runExplore(data.sanMoves, data.variationMoves);

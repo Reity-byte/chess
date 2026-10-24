@@ -940,7 +940,7 @@ The most creative one, and the biggest scope of this list — pairs the Game Ana
 transform animations with piece diffing, arrows, badges, on-board promotion picker, flip, 4 board themes,
 toasts). game/analysis/puzzles/site pages rebuilt on it; responsive down to phone width. Review page:
 eval bar, interactive eval graph, move-quality table (click to jump), keyboard ←/→/Home/End/F.
-Asset URLs carry `?v=8` cache-busting — bump it in the HTML files, the two `new Worker(...)` calls and the
+Asset URLs carry `?v=9` cache-busting — bump it in the HTML files, the two `new Worker(...)` calls and the
 workers' `importScripts` whenever JS/CSS changes ship.
 
 **Still open:** right-click arrows/annotations on the board; per-side difficulty in Engine vs Engine;
@@ -989,6 +989,28 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 🚀 Session 23 — Parallel review, "why" explanations, game history
+
+- **Parallel Game Review:** analysis-worker.js now has `analyzeRange` (moves [from, to), streaming
+  entries) and `finalizeReport` (orders entries, re-applies the one cross-move rule — Miss needs the
+  previous move's loss — and computes accuracy). analysis-page.js runs a pool of up to 8 workers
+  (cores − 1), ~3 ranges per worker; `analyze` (whole game, one worker) is still there for tests.
+  Modes are per position: Quick 300 ms, Standard 1200 ms, Deep 3000 ms. Opera Game, Standard:
+  6.8 s on 8 workers, avg depth 7 (single worker at 800 ms took ~26 s). `ANALYSIS_VERSION` 5.
+- **Explanations:** `explainMove` replays the engine lines to name the reason — allows/misses mate,
+  hangs a piece, loses material, allows/misses a fork, misses winning material; good moves get
+  "Forks …". A fork only counts if it pays off along the engine line (≥150 cp beyond what the forking
+  move itself took). Book and forced moves aren't explained. Entries carry `reason` + `motif`.
+  Review page: reason leads the caption; new Key moments panel (top 5 swings + Brilliant/Great).
+- **History:** `history-store.js` (localStorage `chessGameHistory`, capped 300) written by
+  game-script.js at game end (names with pre-game ratings, engine ratings, rating before/after);
+  the review page adds accuracy and per-side category/motif tallies (`historyId` in the handoff).
+  New `history.html` + `history-page.js`: rating card + graph, results by color, average accuracy,
+  most common error motif, game list with review links. "History" added to every nav.
+- First-visit opponent defaults to the level nearest the player's rating.
+
+---
+
 ## Paste this into a new session to continue:
 
 ```
@@ -1005,6 +1027,7 @@ I have a vanilla JS chess site:
   main/game/analysis.html, analysis-page.js   (Game Review page)
   main/game/analysis.js, openings.js, analysis-worker.js   (Game Analysis Engine)
   main/game/puzzles.html, puzzles-page.js, puzzle-bank.js  (Puzzle Trainer)
+  main/game/history.html, history-page.js, history-store.js  (game history + rating graph)
 
 Please read TODO.md in the project root — Session 20 at the end summarizes the current architecture.
 ```

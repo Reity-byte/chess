@@ -36,8 +36,25 @@ function loadAnalysisWorker(dir = GAME_DIR) {
         return messages.slice();
     };
     return {
+        run: (code) => vm.runInContext(code, ctx),
         analyze: (sanMoves, mode = 'standard') => send({ type: 'analyze', sanMoves, mode }).find(m => m.type === 'done').report,
         judge: (sanMoves, move) => send({ type: 'judge', sanMoves, move }).find(m => m.type === 'judgeReply').result,
+        // The review page's parallel path, run sequentially: fixed-size ranges
+        // (deliberately processed out of order), then the finalize step.
+        analyzeInRanges: (sanMoves, mode = 'standard', rangeSize = 5) => {
+            const ranges = [];
+            for (let from = 0; from < sanMoves.length; from += rangeSize) ranges.push([from, Math.min(sanMoves.length, from + rangeSize)]);
+            const entries = [];
+            let startEval = null;
+            for (const [from, to] of ranges.reverse()) {
+                for (const m of send({ type: 'analyzeRange', sanMoves, from, to, mode, rangeId: from })) {
+                    if (m.type !== 'move') continue;
+                    entries.push(m.entry);
+                    if (m.startEval !== null && m.startEval !== undefined) startEval = m.startEval;
+                }
+            }
+            return send({ type: 'finalize', entries, startEval, sanMoves, mode }).find(m => m.type === 'done').report;
+        },
     };
 }
 

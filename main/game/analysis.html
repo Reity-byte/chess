@@ -4,13 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Review · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=8">
-    <link rel="stylesheet" href="game.css?v=8">
-    <script src="engine.js?v=8" defer></script>
-    <script src="notation.js?v=8" defer></script>
-    <script src="analysis.js?v=8" defer></script>
-    <script src="board-ui.js?v=8" defer></script>
-    <script src="analysis-page.js?v=8" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=9">
+    <link rel="stylesheet" href="game.css?v=9">
+    <script src="engine.js?v=9" defer></script>
+    <script src="notation.js?v=9" defer></script>
+    <script src="analysis.js?v=9" defer></script>
+    <script src="board-ui.js?v=9" defer></script>
+    <script src="history-store.js?v=9" defer></script>
+    <script src="analysis-page.js?v=9" defer></script>
 </head>
 <body>
 
@@ -23,6 +24,7 @@
             <a href="game.html">Play</a>
             <a href="analysis.html" class="active">Review</a>
             <a href="puzzles.html">Puzzles</a>
+            <a href="history.html">History</a>
         </nav>
         <div class="topbar-right">
             <div class="board-theme-picker" aria-label="Board theme"></div>
@@ -122,6 +124,11 @@
                     <button id="retryButton" class="btn btn-primary">↻ Retry mistakes</button>
                     <span class="muted" id="retryCount" style="font-size:13px"></span>
                 </div>
+            </div>
+
+            <div class="panel hidden" id="keyMomentsPanel">
+                <div class="panel-header">Key moments</div>
+                <div class="moments" id="keyMomentsList"></div>
             </div>
 
             <div class="panel moves-panel">

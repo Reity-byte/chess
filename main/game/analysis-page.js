@@ -121,6 +121,7 @@ function loadGame(data) {
     game = {
         sanMoves: data.sanMoves.slice(0, moves.length), moves,
         white: data.white || 'White', black: data.black || 'Black', result: data.result || '*',
+        historyId: data.historyId || null,
     };
     flipped = game.black === 'You';
     board.setFlipped(flipped);
@@ -160,15 +161,35 @@ function cacheKey() {
     return `${ANALYSIS_VERSION}|${analysisMode}|${game.sanMoves.join(' ')}`;
 }
 
+// The game is cut into ranges of consecutive moves, handed out to a pool of
+// workers (one per spare CPU core) — about three ranges per worker so faster
+// workers pick up more. When every range is in, one worker builds the final
+// report. The first worker stays alive afterwards for "what if" and retries.
+const MAX_ANALYSIS_WORKERS = 8;
+const MIN_RANGE = 4;
+let pool = [];           // analysis workers; pool[0] === worker
+let analysisJob = null;  // { run, queue, pending, received }
+let analysisRun = 0;     // bumps per analysis; messages from older runs are ignored
+
+function terminatePool() {
+    for (const w of pool) w.terminate();
+    pool = [];
+    worker = null;
+    analysisJob = null;
+}
+
 function startAnalysis() {
-    if (worker) { worker.terminate(); worker = null; }
+    terminatePool();
     entries = [];
     report = null;
     startEval = null;
     engineBusy = false;
     clearVariation();
     clearPuzzle();
+    clearRetry();
     refreshAllMoveCells();
+    $('keyMomentsPanel').classList.add('hidden');
+    const run = ++analysisRun;
 
     let cached = null;
     try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) { cached = null; }
@@ -178,33 +199,71 @@ function startAnalysis() {
     }
 
     analyzing = true;
-    setProgress(0, game.sanMoves.length);
     renderSummary();
     renderGraph();
-    if (!createWorker()) {
+    const n = game.sanMoves.length;
+    const cores = navigator.hardwareConcurrency || 2;
+    const size = Math.max(1, Math.min(MAX_ANALYSIS_WORKERS, cores - 1, Math.ceil(n / MIN_RANGE)));
+    for (let i = 0; i < size; i++) {
+        const w = createWorker(run);
+        if (!w) break;
+        pool.push(w);
+    }
+    if (!pool.length) {
         $('progressText').textContent = 'Analysis needs the site served over http(s) (Web Workers are blocked here).';
         analyzing = false;
         return;
     }
-    worker.postMessage({ type: 'analyze', sanMoves: game.sanMoves, mode: analysisMode });
+    worker = pool[0];
+    setProgress(0, n);
+
+    const rangeSize = Math.max(MIN_RANGE, Math.ceil(n / (pool.length * 3)));
+    const queue = [];
+    for (let from = 0; from < n; from += rangeSize) queue.push({ rangeId: queue.length, from, to: Math.min(n, from + rangeSize) });
+    analysisJob = { run, queue, pending: queue.length, received: 0 };
+    pool.forEach(dispatchRange);
 }
 
-function createWorker() {
-    try { worker = new Worker('analysis-worker.js?v=8'); } catch (e) { worker = null; return false; }
-    worker.onmessage = (e) => {
+function dispatchRange(w) {
+    const range = analysisJob && analysisJob.queue.shift();
+    if (range) w.postMessage({ type: 'analyzeRange', sanMoves: game.sanMoves, mode: analysisMode, ...range });
+}
+
+function analysisFailed(message) {
+    analyzing = false;
+    engineBusy = false;
+    terminatePool();
+    $('progressText').textContent = 'Analysis failed: ' + message;
+}
+
+function createWorker(run) {
+    let w;
+    try { w = new Worker('analysis-worker.js?v=9'); } catch (e) { return null; }
+    const current = () => run === analysisRun;
+    w.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'start') {
-            renderOpening(d.opening);
+            if (current()) renderOpening(d.opening);
         } else if (d.type === 'move') {
-            startEval = d.startEval;
+            if (!current() || !analysisJob) return;
+            if (d.startEval !== null && d.startEval !== undefined) startEval = d.startEval;
             entries[d.entry.ply] = d.entry;
+            analysisJob.received++;
             updateMoveCell(d.entry.ply);
-            setProgress(d.entry.ply + 1, game.sanMoves.length, d.entry.depth);
+            setProgress(analysisJob.received, game.sanMoves.length, d.entry.depth);
             renderGraph();
             renderCounts();
             if (d.entry.ply === selectedPly || (selectedPly === -1 && d.entry.ply === 0)) refreshSelection();
+        } else if (d.type === 'rangeDone') {
+            if (!current() || !analysisJob) return;
+            analysisJob.pending--;
+            if (analysisJob.queue.length) dispatchRange(w);
+            else if (analysisJob.pending === 0) {
+                $('progressText').textContent = 'Building the report…';
+                worker.postMessage({ type: 'finalize', entries: entries.filter(Boolean), startEval, sanMoves: game.sanMoves, mode: analysisMode });
+            }
         } else if (d.type === 'done') {
-            finishAnalysis(d.report, false);
+            if (current()) finishAnalysis(d.report, false);
         } else if (d.type === 'exploreReply') {
             if (d.requestId === exploreId) onEngineReply(d.result);
         } else if (d.type === 'judgeReply') {
@@ -216,16 +275,14 @@ function createWorker() {
                 showToast('Engine error: ' + d.message);
                 return;
             }
-            analyzing = false;
-            $('progressText').textContent = 'Analysis failed: ' + d.message;
+            if (current()) analysisFailed(d.message);
         }
     };
-    worker.onerror = (err) => {
-        analyzing = false;
-        engineBusy = false;
-        $('progressText').textContent = 'Analysis failed: ' + (err.message || 'worker error');
+    w.onerror = (err) => {
+        err.preventDefault();
+        if (current()) analysisFailed(err.message || 'worker error');
     };
-    return true;
+    return w;
 }
 
 function finishAnalysis(finished, fromCache) {
@@ -233,11 +290,16 @@ function finishAnalysis(finished, fromCache) {
     entries = finished.perMove.slice();
     startEval = finished.startEval;
     analyzing = false;
+    // Keep one worker for "what if" / retries; the rest have done their job.
+    if (pool.length > 1) { pool.slice(1).forEach(w => w.terminate()); pool = [pool[0]]; }
+    if (!worker) { worker = createWorker(analysisRun); pool = worker ? [worker] : []; }
+    analysisJob = null;
     refreshAllMoveCells();
     renderOpening(finished.opening);
     renderSummary();
     renderGraph();
     renderCounts();
+    renderKeyMoments();
     $('progressBox').classList.add('hidden');
     refreshSelection();
     updateRetryButton();
@@ -245,15 +307,16 @@ function finishAnalysis(finished, fromCache) {
         try { localStorage.setItem(CACHE_KEY, JSON.stringify({ key: cacheKey(), report: finished })); } catch (e) { /* cache is optional */ }
         growPuzzleBank(game.sanMoves, finished.perMove);
     }
-    if (!worker) createWorker(); // reports from cache still need a worker for "what if" exploration
+    if (game.historyId) saveReviewToHistory(finished);
     updatePlayerStrips();
 }
 
 function setProgress(done, total, depth) {
     $('progressBox').classList.remove('hidden');
     $('progressFill').style.width = `${total ? (done / total) * 100 : 0}%`;
-    $('progressText').textContent = done < total ? `Analyzing move ${Math.floor(done / 2) + 1} of ${Math.ceil(total / 2)}…` : 'Finishing…';
-    $('progressDepth').textContent = depth ? `depth ${depth}` : ANALYSIS_MODES[analysisMode].label;
+    $('progressText').textContent = `Analyzed ${done} of ${total} moves…`;
+    const cores = pool.length > 1 ? `${pool.length} cores · ` : '';
+    $('progressDepth').textContent = cores + (depth ? `depth ${depth}` : ANALYSIS_MODES[analysisMode].label);
 }
 
 // ─── NAVIGATION ────────────────────────────────────────────────────────────────
@@ -415,13 +478,26 @@ function renderCaption(ply, entry) {
     else if (cat === 'Brilliant') line = `Gives up ${materialWord(entry.sacrifice)} — and the engine approves.`;
     else if (cat === 'Great') line = 'The only move that keeps the position together.';
 
-    if (entry.bestMove) {
-        line = `Best was <strong>${escapeHTML(entry.bestMove.san)}</strong> <span class="eval-pill">${formatEval(entry.evalBefore)}</span>`
-            + (cat === 'Miss' ? ' — an opportunity left on the table.' : '');
-        if (entry.bestLine && entry.bestLine.length > 1) line2 = `<span class="san-line">${escapeHTML(formatLine(entry.bestLine, ply))}</span>`;
+    const praised = cat === 'Brilliant' || cat === 'Great';
+    if (entry.bestMove && praised) {
+        // A brilliant/great move the engine rates level with another: the move's
+        // own story leads; the equally good alternative is a footnote.
+        line2 = `Also good: <strong>${escapeHTML(entry.bestMove.san)}</strong>`;
+    } else if (entry.bestMove) {
+        const bestText = `Best was <strong>${escapeHTML(entry.bestMove.san)}</strong> <span class="eval-pill">${formatEval(entry.evalBefore)}</span>`;
+        const lineText = entry.bestLine && entry.bestLine.length > 1 ? `<span class="san-line">${escapeHTML(formatLine(entry.bestLine, ply))}</span>` : '';
+        if (entry.reason) {
+            // The concrete "why" leads; the better move and its line follow.
+            line = `<span class="reason">${escapeHTML(entry.reason)}</span>`;
+            line2 = bestText + (lineText ? ` · ${lineText}` : '');
+        } else {
+            line = bestText + (cat === 'Miss' ? ' — an opportunity left on the table.' : '');
+            line2 = lineText;
+        }
     } else if (entry.punishLine && entry.punishLine.length && !['Book', 'Forced'].includes(cat)) {
         line2 = `Continuation: <span class="san-line">${escapeHTML(formatLine(entry.punishLine, ply + 1, 6))}</span>`;
     }
+    if (entry.reason && !entry.bestMove) line = `<span class="reason">${escapeHTML(entry.reason)}</span>`;
     if (!line && cat !== 'Book') line = 'Matches the engine.';
 
     setCaption({
@@ -559,6 +635,67 @@ function renderCounts() {
             tr.appendChild(td);
         }
         table.appendChild(tr);
+    }
+}
+
+// ─── HISTORY ───────────────────────────────────────────────────────────────────
+// Stores the review's headline numbers on the game in the history list (the
+// history page shows accuracy and tallies the kinds of mistakes made).
+function saveReviewToHistory(finished) {
+    const side = (color) => {
+        const moves = finished.perMove.filter(m => m.color === color);
+        const motifs = {};
+        for (const m of moves) if (m.motif && m.winLoss >= 5) motifs[m.motif] = (motifs[m.motif] || 0) + 1;
+        return { counts: finished.counts[color], motifs };
+    };
+    updateHistoryGame(game.historyId, {
+        accuracy: finished.accuracy, reviewMode: finished.mode,
+        review: { white: side('white'), black: side('black') },
+    });
+}
+
+// ─── KEY MOMENTS ───────────────────────────────────────────────────────────────
+// The handful of moves that decided the game: the biggest swings plus any
+// brilliant or great moves, listed in game order with their explanation.
+const KEY_MOMENT_COUNT = 5;
+
+function keyMoments() {
+    const weight = (e) => e.category === 'Brilliant' ? 40 : e.category === 'Great' ? 15
+        : ['Blunder', 'Miss', 'Mistake'].includes(e.category) ? e.winLoss : 0;
+    return entries.filter(e => e && weight(e) > 0)
+        .sort((a, b) => weight(b) - weight(a))
+        .slice(0, KEY_MOMENT_COUNT)
+        .sort((a, b) => a.ply - b.ply);
+}
+
+function momentText(e) {
+    if (e.reason) return e.reason;
+    if (e.category === 'Brilliant') return `Gives up ${materialWord(e.sacrifice)} — and it works.`;
+    if (e.category === 'Great') return 'The only move that holds the position.';
+    return e.bestMove ? `Best was ${e.bestMove.san}.` : CATEGORY_DESCRIPTIONS[e.category];
+}
+
+function renderKeyMoments() {
+    const list = $('keyMomentsList');
+    list.innerHTML = '';
+    const moments = report ? keyMoments() : [];
+    $('keyMomentsPanel').classList.toggle('hidden', !report);
+    if (!moments.length) {
+        list.innerHTML = '<div class="moves-empty">A clean game — no big swings.</div>';
+        return;
+    }
+    for (const e of moments) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'moment';
+        const name = e.color === 'white' ? game.white : game.black;
+        row.innerHTML = `<span class="mv-icon" style="background:${CATEGORY_COLORS[e.category]}">${CATEGORY_SYMBOLS[e.category]}</span>`
+            + `<span class="moment-body"><span class="moment-title">${moveNumberPrefix(e.ply)} ${escapeHTML(e.san)}`
+            + ` <span class="faint">· ${escapeHTML(name)} · ${e.category}</span></span>`
+            + `<span class="moment-text">${escapeHTML(momentText(e))}</span></span>`
+            + `<span class="moment-eval">${formatEval(e.evalAfter)}</span>`;
+        row.addEventListener('click', () => selectPly(e.ply));
+        list.appendChild(row);
     }
 }
 
