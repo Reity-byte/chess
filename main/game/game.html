@@ -4,15 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Play · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=7">
-    <link rel="stylesheet" href="game.css?v=7">
-    <script src="engine.js?v=7" defer></script>
-    <script src="ai.js?v=7" defer></script>
-    <script src="notation.js?v=7" defer></script>
-    <script src="openings.js?v=7" defer></script>
-    <script src="sound.js?v=7" defer></script>
-    <script src="board-ui.js?v=7" defer></script>
-    <script src="game-script.js?v=7" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=8">
+    <link rel="stylesheet" href="game.css?v=8">
+    <script src="engine.js?v=8" defer></script>
+    <script src="ai.js?v=8" defer></script>
+    <script src="notation.js?v=8" defer></script>
+    <script src="openings.js?v=8" defer></script>
+    <script src="strength.js?v=8" defer></script>
+    <script src="sound.js?v=8" defer></script>
+    <script src="board-ui.js?v=8" defer></script>
+    <script src="game-script.js?v=8" defer></script>
 </head>
 <body>
 
@@ -37,7 +38,7 @@
             <div class="player-strip" id="topStrip">
                 <div class="avatar"><span class="piece-icon black king" id="topAvatar"></span></div>
                 <div class="player-meta">
-                    <span class="player-name"><span id="topName">Engine</span><span class="thinking-dots">•••</span></span>
+                    <span class="player-name"><span id="topName">Engine</span><span class="player-rating" id="topRating"></span><span class="thinking-dots">•••</span></span>
                     <div class="captured" id="topCaptured"></div>
                 </div>
                 <div class="clock" id="topClock"></div>
@@ -48,7 +49,7 @@
             <div class="player-strip" id="bottomStrip">
                 <div class="avatar"><span class="piece-icon white king" id="bottomAvatar"></span></div>
                 <div class="player-meta">
-                    <span class="player-name"><span id="bottomName">You</span><span class="thinking-dots">•••</span></span>
+                    <span class="player-name"><span id="bottomName">You</span><span class="player-rating" id="bottomRating"></span><span class="thinking-dots">•••</span></span>
                     <div class="captured" id="bottomCaptured"></div>
                 </div>
                 <div class="clock" id="bottomClock"></div>
@@ -90,7 +91,7 @@
     <div id="setupModal" class="modal-overlay hidden">
         <div class="modal setup-modal">
             <h2>New game</h2>
-            <p class="modal-sub">Choose how you want to play.</p>
+            <p class="modal-sub" id="setupSub">Choose how you want to play.</p>
 
             <div class="eyebrow field-label">Mode</div>
             <div class="segmented" data-group="mode">
@@ -107,12 +108,19 @@
                 </div>
             </div>
 
-            <div class="eyebrow field-label">Engine strength</div>
-            <div class="segmented" data-group="difficulty">
-                <button data-value="beginner">Beginner<small>~depth 1</small></button>
-                <button data-value="intermediate" class="selected">Casual<small>~depth 2</small></button>
-                <button data-value="expert">Expert<small>~depth 6</small></button>
-                <button data-value="master">Master<small>full</small></button>
+            <div id="strengthHuman">
+                <div class="eyebrow field-label">Engine strength</div>
+                <div class="strength" data-level-key="level"></div>
+                <div class="strength-meta">
+                    <span class="muted" id="levelOdds"></span>
+                    <button type="button" class="btn btn-ghost" id="matchRatingButton">Match my rating</button>
+                </div>
+            </div>
+            <div id="strengthAi" class="hidden">
+                <div class="eyebrow field-label">White engine</div>
+                <div class="strength" data-level-key="whiteLevel"></div>
+                <div class="eyebrow field-label">Black engine</div>
+                <div class="strength" data-level-key="blackLevel"></div>
             </div>
 
             <div class="eyebrow field-label">Time control</div>
@@ -138,6 +146,7 @@
             <div class="result-banner">
                 <span class="result-score" id="gameOverScore">½–½</span>
                 <span class="muted" id="gameOverMoves"></span>
+                <span class="rating-change" id="gameOverRating"></span>
             </div>
             <div class="modal-actions">
                 <button id="reportButton" class="btn btn-primary btn-lg btn-block">★ Game Review</button>

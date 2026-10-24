@@ -3,17 +3,9 @@
 // (in a Web Worker, see ai-worker.js), clocks, takeback/draw/resign, PGN, and
 // save/resume. The rules live in engine.js; this file only orchestrates.
 
-// Difficulty controls search depth and eval noise (random centipawn jitter on
-// each root move's score when the engine picks — weaker levels make human-like
-// slips instead of just playing shallow, predictable moves).
-const DIFFICULTY = {
-    beginner:     { label: 'Beginner', maxDepth: 1,  evalNoise: 80 },
-    intermediate: { label: 'Casual',   maxDepth: 2,  evalNoise: 30 },
-    expert:       { label: 'Expert',   maxDepth: 6,  evalNoise: 15 },
-    master:       { label: 'Master',   maxDepth: 64, evalNoise: 0  },
-};
-
-const AI_TIME_HUMAN = 1500;   // ms search budget when playing against a human
+// Engine strength comes from the calibrated ladder in strength.js: each level is
+// a search depth + eval-noise setting with a self-play-measured rating.
+const AI_TIME_HUMAN = ENGINE_MOVE_TIME_MS; // the time cap the ladder was calibrated with
 const AI_TIME_SELFPLAY = 500; // ms per move in Engine vs Engine (keeps it watchable)
 const MIN_REPLY_MS = 250;     // instant (book) replies still get a beat before they land
 
@@ -26,13 +18,23 @@ const TIME_CONTROLS = {
 
 const INPROGRESS_KEY = 'chessInProgressGame';
 const ANALYSIS_HANDOFF_KEY = 'chessGameForAnalysis';
+const SETUP_KEY = 'chessSetup';
+const PLAYER_RATING_KEY = 'chessPlayerRating';
+const DEFAULT_PLAYER_RATING = 800;
+const PROVISIONAL_GAMES = 20;  // bigger rating steps until the rating has settled
+const MIN_RATED_PLIES = 4;     // games aborted before this many moves don't count
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
-const settings = { mode: 'human', color: 'white', difficulty: 'intermediate', time: 'unlimited' };
+// Setup choices; level / whiteLevel / blackLevel are ENGINE_LEVELS indices.
+const settings = Object.assign(
+    { mode: 'human', color: 'white', time: 'unlimited', level: 5, whiteLevel: 10, blackLevel: 10 },
+    loadJSON(SETUP_KEY) || {});
 
 let gameMode = 'human';     // 'human' (vs engine) | 'ai' (engine vs engine)
 let playerColor = 'white';  // the human's color (orientation reference in AI vs AI)
-let difficulty = 'intermediate';
+let engineLevels = { white: null, black: null }; // level index per engine-controlled color
+let rated = false;          // vs-engine games count toward your rating unless a takeback is used
+let ratingChange = null;    // { before, after, delta } once a rated game has ended
 let timeControl = 'unlimited';
 let isFlipped = false;
 
@@ -46,6 +48,43 @@ let board = null;
 
 function sanList() {
     return rowsToSAN(moveHistory);
+}
+
+function loadJSON(key) {
+    try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
+}
+
+function saveJSON(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage unavailable */ }
+}
+
+// ─── PLAYER RATING ─────────────────────────────────────────────────────────────
+// Plain Elo against the engine levels' calibrated ratings.
+function playerRating() {
+    const r = loadJSON(PLAYER_RATING_KEY);
+    return r && Number.isFinite(r.rating) ? r : { rating: DEFAULT_PLAYER_RATING, games: 0 };
+}
+
+function expectedScore(rating, opponentRating) {
+    return 1 / (1 + Math.pow(10, (opponentRating - rating) / 400));
+}
+
+function recordRatedResult(score, opponentRating) {
+    const r = playerRating();
+    const k = r.games < PROVISIONAL_GAMES ? 40 : 20;
+    const delta = Math.round(k * (score - expectedScore(r.rating, opponentRating)));
+    const after = Math.max(100, r.rating + delta);
+    saveJSON(PLAYER_RATING_KEY, { rating: after, games: r.games + 1 });
+    return { before: r.rating, after, delta: after - r.rating };
+}
+
+function ratingText(r) {
+    return `${r.rating}${r.games < PROVISIONAL_GAMES ? '?' : ''}`;
+}
+
+function levelOf(color) {
+    const index = engineLevels[color];
+    return index === null || index === undefined ? null : ENGINE_LEVELS[index] || null;
 }
 
 function rowsToSAN(rows) {
@@ -82,7 +121,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=7');
+            this.worker = new Worker('ai-worker.js?v=8');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -152,6 +191,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const $ = (id) => document.getElementById(id);
     const setupModal = $('setupModal');
 
+    buildStrengthSliders();
+    $('matchRatingButton').addEventListener('click', () => {
+        settings.level = nearestEngineLevel(playerRating().rating);
+        syncSetupUI();
+    });
+
     // Segmented controls in the setup modal write into `settings`.
     document.querySelectorAll('#setupModal .segmented').forEach(group => {
         group.addEventListener('click', (e) => {
@@ -186,7 +231,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // ?resume=1 continues the saved in-progress game.
     const params = new URLSearchParams(location.search);
     if (params.get('mode') === 'human' || params.get('mode') === 'ai') settings.mode = params.get('mode');
-    if (DIFFICULTY[params.get('difficulty')]) settings.difficulty = params.get('difficulty');
+    const legacy = LEGACY_DIFFICULTY_LEVEL[params.get('difficulty')];
+    if (legacy !== undefined) settings.level = legacy;
 
     let resumeData = null;
     if (params.get('resume') === '1') {
@@ -201,12 +247,52 @@ document.addEventListener('DOMContentLoaded', () => {
     else openSetup();
 });
 
+// Builds one slider + readout in every `.strength[data-level-key]` container.
+function buildStrengthSliders() {
+    document.querySelectorAll('#setupModal .strength').forEach(box => {
+        const key = box.dataset.levelKey;
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'strength-slider';
+        slider.min = 0;
+        slider.max = ENGINE_LEVELS.length - 1;
+        slider.step = 1;
+        slider.setAttribute('aria-label', key === 'level' ? 'Engine strength' : `${key === 'whiteLevel' ? 'White' : 'Black'} engine strength`);
+        const readout = document.createElement('div');
+        readout.className = 'strength-readout';
+        slider.addEventListener('input', () => { settings[key] = +slider.value; syncSetupUI(); });
+        box.append(slider, readout);
+    });
+}
+
 function syncSetupUI() {
     document.querySelectorAll('#setupModal .segmented').forEach(group => {
         group.querySelectorAll('button').forEach(b =>
             b.classList.toggle('selected', b.dataset.value === settings[group.dataset.group]));
     });
     document.getElementById('colorChoiceRow').classList.toggle('hidden', settings.mode === 'ai');
+    document.getElementById('strengthHuman').classList.toggle('hidden', settings.mode === 'ai');
+    document.getElementById('strengthAi').classList.toggle('hidden', settings.mode !== 'ai');
+
+    document.querySelectorAll('#setupModal .strength').forEach(box => {
+        const index = Math.max(0, Math.min(ENGINE_LEVELS.length - 1, settings[box.dataset.levelKey] | 0));
+        settings[box.dataset.levelKey] = index;
+        const level = ENGINE_LEVELS[index];
+        const slider = box.querySelector('input');
+        slider.value = index;
+        slider.style.setProperty('--fill', `${(index / (ENGINE_LEVELS.length - 1)) * 100}%`);
+        box.querySelector('.strength-readout').innerHTML =
+            `<strong>≈ ${level.rating}</strong><span>${engineLevelTitle(level.rating)}</span>`;
+    });
+
+    const me = playerRating();
+    const opponent = ENGINE_LEVELS[settings.level];
+    document.getElementById('levelOdds').textContent =
+        `Your expected score: ${Math.round(expectedScore(me.rating, opponent.rating) * 100)}%`;
+    document.getElementById('setupSub').textContent = me.games
+        ? `Your rating: ${ratingText(me)} after ${me.games} rated game${me.games === 1 ? '' : 's'}.`
+        : `Your rating starts at ${me.rating} and adjusts after every game against the engine.`;
+    saveJSON(SETUP_KEY, settings);
 }
 
 function openSetup() {
@@ -224,15 +310,26 @@ function startGame(resumeData) {
     if (resumeData) {
         gameMode = resumeData.gameMode;
         playerColor = resumeData.playerColor;
-        difficulty = DIFFICULTY[resumeData.selectedDifficulty] ? resumeData.selectedDifficulty : 'intermediate';
         timeControl = resumeData.selectedTimeControl || 'unlimited';
+        if (resumeData.engineLevels) {
+            engineLevels = resumeData.engineLevels;
+        } else {
+            // Saved by an older version: map its named difficulty onto the ladder.
+            const legacy = LEGACY_DIFFICULTY_LEVEL[resumeData.selectedDifficulty] ?? settings.level;
+            engineLevels = { white: null, black: null, [other(playerColor)]: legacy };
+        }
+        rated = resumeData.rated === true;
     } else {
         gameMode = settings.mode;
         playerColor = gameMode === 'ai' ? 'white'
             : settings.color === 'random' ? (Math.random() < 0.5 ? 'white' : 'black') : settings.color;
-        difficulty = settings.difficulty;
+        engineLevels = gameMode === 'ai'
+            ? { white: settings.whiteLevel, black: settings.blackLevel }
+            : { white: null, black: null, [other(playerColor)]: settings.level };
+        rated = gameMode === 'human';
         timeControl = settings.time;
     }
+    ratingChange = null;
     isFlipped = playerColor === 'black';
 
     const resumeSAN = resumeData ? rowsToSAN(resumeData.moveHistory) : [];
@@ -323,7 +420,7 @@ async function playEngineMove() {
     if (!isEngineTurn() || aiThinking) return;
     const token = gameToken;
     const color = currentTurn;
-    const level = DIFFICULTY[difficulty];
+    const level = levelOf(color);
     aiThinking = true;
     updateStatus();
     const started = Date.now();
@@ -358,6 +455,14 @@ function endGame(status) {
     playGameOverSound();
     gameResult = status.result;
     board.setInteractive(false);
+    if (rated && gameMode === 'human' && status.result !== '*') {
+        if (sanList().length >= MIN_RATED_PLIES) {
+            const score = status.result === '1/2-1/2' ? 0.5 : (status.result === '1-0') === (playerColor === 'white') ? 1 : 0;
+            ratingChange = recordRatedResult(score, levelOf(other(playerColor)).rating);
+        }
+        rated = false; // never count the same game twice
+    }
+    updatePlayers();
     updateStatus(status);
     updateClockDisplay();
     setTimeout(() => showGameOverModal(status), 450);
@@ -367,9 +472,22 @@ function endGame(status) {
 const START_COUNTS = { pawn: 8, knight: 2, bishop: 2, rook: 2, queen: 1 };
 const CAPTURE_ORDER = ['queen', 'rook', 'bishop', 'knight', 'pawn'];
 
+// Display name (the rating is shown next to it); 'You' must stay exactly that,
+// the review page uses it to orient the board and pick whose mistakes to retry.
 function playerLabel(color) {
-    if (gameMode === 'ai') return `Engine · ${color === 'white' ? 'White' : 'Black'}`;
-    return color === playerColor ? 'You' : `Engine · ${DIFFICULTY[difficulty].label}`;
+    return gameMode === 'human' && color === playerColor ? 'You' : 'Engine';
+}
+
+function playerRatingLabel(color) {
+    if (gameMode === 'human' && color === playerColor) return ratingText(playerRating());
+    const level = levelOf(color);
+    return level ? `≈${level.rating}` : '';
+}
+
+// Name with rating, for PGN headers and the review page.
+function fullPlayerName(color) {
+    const r = playerRatingLabel(color);
+    return r ? `${playerLabel(color)} (${r})` : playerLabel(color);
 }
 
 function updatePlayers() {
@@ -387,6 +505,7 @@ function updatePlayers() {
     }
     const fill = (prefix, color) => {
         document.getElementById(prefix + 'Name').textContent = playerLabel(color);
+        document.getElementById(prefix + 'Rating').textContent = playerRatingLabel(color);
         document.getElementById(prefix + 'Avatar').className = `piece-icon ${color} king`;
         const cap = document.getElementById(prefix + 'Captured');
         cap.innerHTML = '';
@@ -418,7 +537,14 @@ function updateStatus(finalStatus) {
     const dot = document.getElementById('statusDot');
     const chip = document.getElementById('levelChip');
     chip.hidden = !gameActive && !finalStatus;
-    chip.textContent = gameMode === 'ai' ? 'Engine vs Engine' : DIFFICULTY[difficulty].label;
+    const opponent = levelOf(other(playerColor));
+    if (gameMode === 'ai' && levelOf('white') && levelOf('black')) {
+        chip.textContent = `≈${levelOf('white').rating} vs ≈${levelOf('black').rating}`;
+    } else if (opponent) {
+        chip.textContent = `Engine ≈${opponent.rating} · ${rated ? 'rated' : 'unrated'}`;
+    } else {
+        chip.hidden = true; // no game set up yet
+    }
     dot.className = 'status-dot';
 
     if (finalStatus) {
@@ -560,6 +686,10 @@ function takeback() {
     gameToken++;
     engineClient.cancel();
     aiThinking = false;
+    if (rated) {
+        rated = false;
+        showToast('Takeback used — this game no longer counts toward your rating.', 3200);
+    }
 
     list.pop();
     while (list.length > 0 && (list.length % 2 === 0 ? 'white' : 'black') !== playerColor) list.pop();
@@ -581,7 +711,7 @@ function saveInProgressGame() {
     if (!gameActive || gameMode !== 'human') return;
     try {
         localStorage.setItem(INPROGRESS_KEY, JSON.stringify({
-            moveHistory, gameMode, playerColor, selectedDifficulty: difficulty, selectedTimeControl: timeControl,
+            moveHistory, gameMode, playerColor, engineLevels, rated, selectedTimeControl: timeControl,
             clock: clockState ? { white: clockState.white, black: clockState.black, incrementMs: clockState.incrementMs } : null,
         }));
     } catch (e) { /* storage full or unavailable: resume just won't be offered */ }
@@ -599,6 +729,14 @@ function showGameOverModal(status) {
         status.result === '1/2-1/2' ? '½–½' : status.result.replace('-', '–');
     const n = moveHistory.length;
     document.getElementById('gameOverMoves').textContent = `${n} move${n === 1 ? '' : 's'}`;
+    const ratingEl = document.getElementById('gameOverRating');
+    if (ratingChange) {
+        ratingEl.textContent = `${ratingChange.before} → ${ratingChange.after} (${ratingChange.delta >= 0 ? '+' : ''}${ratingChange.delta})`;
+        ratingEl.className = 'rating-change ' + (ratingChange.delta >= 0 ? 'up' : 'down');
+    } else {
+        ratingEl.textContent = gameMode === 'human' ? 'unrated' : '';
+        ratingEl.className = 'rating-change muted';
+    }
     document.getElementById('reportButton').disabled = sanList().length === 0;
     document.getElementById('gameOverModal').classList.remove('hidden');
 }
@@ -609,8 +747,8 @@ function openReview() {
     try {
         localStorage.setItem(ANALYSIS_HANDOFF_KEY, JSON.stringify({
             sanMoves: sans,
-            white: playerLabel('white'),
-            black: playerLabel('black'),
+            white: fullPlayerName('white').replace(/^You .*/, 'You'),
+            black: fullPlayerName('black').replace(/^You .*/, 'You'),
             result: gameActive ? '*' : gameResult,
         }));
     } catch (e) { showToast('Could not hand the game to the review page.'); return; }
@@ -623,7 +761,7 @@ function buildPGN() {
     const result = gameActive ? '*' : gameResult;
     const headers = [
         '[Event "Casual Game"]', '[Site "Chess Site"]', `[Date "${today}"]`, '[Round "1"]',
-        `[White "${playerLabel('white')}"]`, `[Black "${playerLabel('black')}"]`, `[Result "${result}"]`,
+        `[White "${fullPlayerName('white')}"]`, `[Black "${fullPlayerName('black')}"]`, `[Result "${result}"]`,
     ];
     let movetext = '';
     moveHistory.forEach((row, i) => {

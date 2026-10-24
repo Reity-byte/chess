@@ -63,6 +63,51 @@ function loadRevisionEngine(rev) {
     return engine;
 }
 
+// ─── ENGINE-VS-ENGINE GAMES ────────────────────────────────────────────────────
+// Openings the matches start from (both colors are played from each), so games
+// don't all repeat the engine's favourite line.
+const MATCH_OPENINGS = [
+    [], ['e4', 'e5'], ['d4', 'd5'], ['e4', 'c5'], ['c4', 'e5'], ['e4', 'e6'], ['d4', 'Nf6', 'c4', 'g6'],
+    ['e4', 'c6'], ['Nf3', 'd5'], ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'], ['d4', 'd5', 'c4', 'e6'], ['e4', 'd5'],
+];
+
+// A player = an engine context + search settings { timeMs, maxDepth, evalNoise }.
+function makePlayer(engine, cfg) {
+    const { run } = engine;
+    return {
+        reset: () => run('resetGame(); recordPosition(); clearSearchMemory();'),
+        think: () => run(`(() => {
+            const r = findBestMove(currentTurn, ${cfg.timeMs}, ${cfg.maxDepth}, ${cfg.evalNoise || 0}, []);
+            const isPromo = gameState[r.move.fromY][r.move.fromX].type === 'pawn' && (r.move.toY === 0 || r.move.toY === 7);
+            return moveToSAN(r.move.fromX, r.move.fromY, r.move.toX, r.move.toY, r.move.details, isPromo ? (r.promo || 'queen') : null);
+        })()`),
+        play: (san) => run(`(() => { const r = resolveSAN(currentTurn, ${JSON.stringify(san)}); if (!r) return false;
+            applyMoveWithPromotion(r.move, r.promo); recordPosition(); return true; })()`),
+        status: () => run('getGameStatus()'),
+    };
+}
+
+// Plays one game; returns { result: '1-0' | '0-1' | '1/2-1/2' | '*', message, plies }.
+function playGame(white, black, opening = [], maxPlies = 240) {
+    white.reset(); black.reset();
+    let plies = 0;
+    for (const san of opening) { white.play(san); black.play(san); plies++; }
+    while (plies < maxPlies) {
+        const san = (plies % 2 === 0 ? white : black).think();
+        if (!white.play(san) || !black.play(san)) return { result: '*', message: `desync on ${san}`, plies };
+        plies++;
+        const status = white.status();
+        if (status) return { ...status, plies };
+    }
+    return { result: '1/2-1/2', message: 'move cap', plies };
+}
+
+// Elo difference implied by a score fraction; clamped so 0% / 100% stay finite.
+function eloFromScore(points, games) {
+    const p = Math.min(1 - 0.5 / games, Math.max(0.5 / games, points / games));
+    return -400 * Math.log10(1 / p - 1);
+}
+
 // Movetext ("1. e4 e5 2. Nf3 ...") -> SAN array.
 function sanList(movetext) {
     return movetext.replace(/\d+\.(\.\.)?/g, ' ').split(/\s+/).filter(Boolean);
@@ -117,4 +162,7 @@ function makeChecker() {
     };
 }
 
-module.exports = { ROOT, GAME_DIR, loadEngine, loadRevisionEngine, loadAnalysisWorker, engineAtRevision, sanList, makeChecker };
+module.exports = {
+    ROOT, GAME_DIR, loadEngine, loadRevisionEngine, loadAnalysisWorker, engineAtRevision, sanList, makeChecker,
+    MATCH_OPENINGS, makePlayer, playGame, eloFromScore,
+};

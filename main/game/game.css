@@ -258,6 +258,43 @@
 .action-grid .btn { padding: 0 8px; }
 .panel-footer { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
 
+/* Engine strength slider (setup modal). */
+.strength { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px; }
+.strength-slider {
+    width: 100%;
+    height: 6px;
+    appearance: none;
+    -webkit-appearance: none;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--accent) 0 var(--fill, 50%), var(--surface-3) var(--fill, 50%) 100%);
+    cursor: pointer;
+}
+.strength-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #eef0f2;
+    border: 3px solid var(--accent);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.strength-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #eef0f2;
+    border: 3px solid var(--accent);
+}
+.strength-readout { min-width: 118px; text-align: right; line-height: 1.2; }
+.strength-readout strong { display: block; font: 800 22px var(--mono); }
+.strength-readout span { font-size: 12px; color: var(--text-dim); }
+.strength-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: 13px; }
+.strength-meta .btn { height: 30px; padding: 0 10px; font-size: 12px; }
+.player-rating { margin-left: 6px; font: 600 12px var(--mono); color: var(--text-faint); }
+.rating-change { margin-left: auto; font: 700 14px var(--mono); }
+.rating-change.up { color: var(--accent); }
+.rating-change.down { color: var(--danger); }
+
 /* Setup modal: four difficulty / time options fit on one row. */
 .setup-modal .segmented button { height: 44px; }
 .result-banner {

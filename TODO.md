@@ -940,7 +940,7 @@ The most creative one, and the biggest scope of this list — pairs the Game Ana
 transform animations with piece diffing, arrows, badges, on-board promotion picker, flip, 4 board themes,
 toasts). game/analysis/puzzles/site pages rebuilt on it; responsive down to phone width. Review page:
 eval bar, interactive eval graph, move-quality table (click to jump), keyboard ←/→/Home/End/F.
-Asset URLs carry `?v=7` cache-busting — bump it in the HTML files, the two `new Worker(...)` calls and the
+Asset URLs carry `?v=8` cache-busting — bump it in the HTML files, the two `new Worker(...)` calls and the
 workers' `importScripts` whenever JS/CSS changes ship.
 
 **Still open:** right-click arrows/annotations on the board; per-side difficulty in Engine vs Engine;
@@ -967,6 +967,26 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 🎚️ Session 22 — Rating-based difficulty
+
+- `main/game/strength.js`: `ENGINE_LEVELS` = 14 calibrated levels (search depth + eval noise + rating),
+  `nearestEngineLevel`, `engineLevelTitle`, `LEGACY_DIFFICULTY_LEVEL` (old beginner/intermediate/expert/
+  master saves and `?difficulty=` links map onto the ladder). Lower levels step by noise inside a depth,
+  upper levels step by depth (pilot runs showed noise < ~40cp barely matters once depth ≥ 4).
+- Ratings are measured by `node tests/calibrate.js --games 30 --write` (neighbouring levels play each
+  other in parallel child processes at the live 1500 ms cap; Elo gaps are summed from level 0 =
+  `ENGINE_RATING_ANCHOR` 400). Relative numbers are measured; the absolute anchor is a judgement call,
+  hence "≈" in the UI. Re-run after any search/eval change.
+- Eval noise no longer forces exact scores for every root move: moves provably below best − 2·noise
+  only get a null-window probe (equivalent move choice, ~8× faster at depth 6–8).
+- Setup: strength slider with rating/title/expected score + "Match my rating"; Engine vs Engine has a
+  slider per side. Setup choices persist (`chessSetup`).
+- Player rating (`chessPlayerRating`, default 800, K=40 for the first 20 games then 20): vs-engine
+  games count unless a takeback is used or the game ends before 4 plies; the game-over dialog shows the
+  change. PGN headers carry ratings ("Engine (≈1350)"); review handoff keeps the name `You`.
+
+---
+
 ## Paste this into a new session to continue:
 
 ```
@@ -977,6 +997,7 @@ I have a vanilla JS chess site:
   main/game/board-ui.js   (BoardView: rendering, drag/click input, arrows, badges, themes, toasts)
   main/game/engine.js     (rules, move gen, Zobrist keys, getGameStatus)
   main/game/ai.js         (0x88 search board + PVS search; searchRoot()/findBestMove())
+  main/game/strength.js   (calibrated engine strength ladder; tests/calibrate.js measures it)
   main/game/ai-worker.js  (live-game engine worker)
   main/game/notation.js   (SAN generation + resolveSAN/replaySANFromStart)
   main/game/analysis.html, analysis-page.js   (Game Review page)

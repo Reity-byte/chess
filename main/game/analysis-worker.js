@@ -11,7 +11,7 @@
 // comparing two searches of different depth. The next position's search then
 // supplies the eval graph point after the move and the opponent's best reply
 // (the "punish" move for puzzles). Results stream back move by move.
-importScripts('engine.js?v=7', 'ai.js?v=7', 'notation.js?v=7', 'openings.js?v=7', 'analysis.js?v=7');
+importScripts('engine.js?v=8', 'ai.js?v=8', 'notation.js?v=8', 'openings.js?v=8', 'analysis.js?v=8');
 
 // "What if" exploration always searches at full strength, whatever difficulty
 // the original game was played at.

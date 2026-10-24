@@ -190,7 +190,7 @@ function startAnalysis() {
 }
 
 function createWorker() {
-    try { worker = new Worker('analysis-worker.js?v=7'); } catch (e) { worker = null; return false; }
+    try { worker = new Worker('analysis-worker.js?v=8'); } catch (e) { worker = null; return false; }
     worker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'start') {

@@ -1036,9 +1036,11 @@ function extractPV(first, maxLen) {
 // Iterative deepening over the root moves of the side to move on the real
 // board; only results of fully completed depths are used. Options:
 //   timeMs, maxDepth – limits (depth 1 always completes)
-//   evalNoise        – centipawn jitter applied to each root move's exact score
-//                      when choosing (weaker difficulty levels); forces exact
-//                      scores for every root move
+//   evalNoise        – centipawn jitter (uniform ±evalNoise) applied to each
+//                      root move's exact score when choosing (weaker levels).
+//                      A move scoring at or below best − 2·evalNoise can never
+//                      win the draw, so those only get a cheap null-window
+//                      "is it below that line?" probe instead of an exact score
 //   multiPV          – how many top moves get exact scores (default 1)
 //   includeMove/includePromo – a game move whose exact score is always computed
 //                      (the move actually played, for the Game Analysis Engine)
@@ -1087,7 +1089,7 @@ function searchRoot(color, opts = {}) {
     let entries = rootMoves.map((m, i) => ({ m, score: -INF, exact: false, order: scoreBuf[SCRATCH_BASE + i], include: m === includeMove }));
     entries.sort((a, b) => b.order - a.order);
 
-    const exactAll = evalNoise > 0 || multiPV >= entries.length;
+    const exactAll = multiPV >= entries.length;
     let completedDepth = 0;
 
     const searchChild = (m, depth, alpha, beta) => {
@@ -1116,7 +1118,9 @@ function searchRoot(color, opts = {}) {
                 if (exactAll || e.include || exactScores.length < multiPV) {
                     score = searchChild(e.m, depth, -INF, INF);
                 } else {
-                    const alpha = exactScores[multiPV - 1];
+                    // Without noise: is it better than the multiPV-th best so far?
+                    // With noise: could it still be picked at all (see evalNoise above)?
+                    const alpha = evalNoise > 0 ? exactScores[0] - 2 * evalNoise : exactScores[multiPV - 1];
                     score = searchChild(e.m, depth, alpha, alpha + 1);
                     exact = false;
                     if (score > alpha) { score = searchChild(e.m, depth, alpha, INF); exact = true; }
@@ -1144,6 +1148,7 @@ function searchRoot(color, opts = {}) {
     if (evalNoise > 0) {
         let bestJittered = -Infinity;
         for (const e of entries) {
+            if (!e.exact) continue; // a bound, not a score — and provably out of reach
             const jittered = e.score + (Math.random() * 2 - 1) * evalNoise;
             if (jittered > bestJittered) { bestJittered = jittered; chosen = e; }
         }
