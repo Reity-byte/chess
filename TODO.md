@@ -969,14 +969,16 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ## 🎚️ Session 22 — Rating-based difficulty
 
-- `main/game/strength.js`: `ENGINE_LEVELS` = 14 calibrated levels (search depth + eval noise + rating),
+- `main/game/strength.js`: `ENGINE_LEVELS` = 11 calibrated levels, ≈400 to ≈2320 (search depth + eval noise + rating),
   `nearestEngineLevel`, `engineLevelTitle`, `LEGACY_DIFFICULTY_LEVEL` (old beginner/intermediate/expert/
   master saves and `?difficulty=` links map onto the ladder). Lower levels step by noise inside a depth,
   upper levels step by depth (pilot runs showed noise < ~40cp barely matters once depth ≥ 4).
 - Ratings are measured by `node tests/calibrate.js --games 30 --write` (neighbouring levels play each
   other in parallel child processes at the live 1500 ms cap; Elo gaps are summed from level 0 =
   `ENGINE_RATING_ANCHOR` 400). Relative numbers are measured; the absolute anchor is a judgement call,
-  hence "≈" in the UI. Re-run after any search/eval change.
+  hence "≈" in the UI. Re-run after any search/eval change. The 2026-10-24 run measured 14 candidates;
+  three (depth 4/noise 40, depth 7, depth 9) were dropped as no stronger than the level below. Self-play
+  tends to stretch the top of the scale relative to human ratings.
 - Eval noise no longer forces exact scores for every root move: moves provably below best − 2·noise
   only get a null-window probe (equivalent move choice, ~8× faster at depth 6–8).
 - Setup: strength slider with rating/title/expected score + "Match my rating"; Engine vs Engine has a
