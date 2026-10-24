@@ -1,0 +1,13 @@
+{
+  "name": "chess-site",
+  "private": true,
+  "description": "Vanilla JS chess site — engine, game review and puzzle trainer. No dependencies; scripts are only for testing.",
+  "scripts": {
+    "start": "py -3 -m http.server 8933",
+    "test": "node tests/perft.js && node tests/analysis.js",
+    "test:perft": "node tests/perft.js",
+    "test:analysis": "node tests/analysis.js",
+    "bench": "node tests/bench.js",
+    "match": "node tests/match.js"
+  }
+}

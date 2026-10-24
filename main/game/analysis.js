@@ -1,84 +1,117 @@
 // ─── GAME ANALYSIS ENGINE — SHARED CONSTANTS ──────────────────────────────────
-// Post-game move classification in the style of chess.com's "Game Report":
-// Book / Best / Excellent / Good / Inaccuracy / Mistake / Blunder / Miss / Brilliant.
-//
-// This file is loaded by BOTH analysis-worker.js (via importScripts, where the
-// actual classification runs) and analysis.html (via a script tag, for rendering
-// the review page), which is why it holds only shared, DOM-free constants and a
-// pure string-building helper — nothing here touches `document` or `self`.
-// Thresholds are win-PROBABILITY-POINT loss (0-100), not raw centipawns. Raw cp
-// thresholds looked right in balanced middlegames but badly over-flagged forced
-// or already-decided endgame moves: once you're already down a queen, losing an
-// extra rook is still ~1500cp of "loss" even though your actual winning chances
-// barely moved (roughly 0% either way) - every reply in a lost position came out
-// Blunder/Miss even when it was the only legal move. Win-probability naturally
-// compresses that tail the way chess.com/lichess do, so only losses that actually
-// change the practical outcome get flagged harshly. Checked in ascending order;
-// anything above `mistake` is a Blunder.
+// Post-game move classification in the style of chess.com's "Game Review".
+// Loaded by BOTH analysis-worker.js (importScripts, where classification runs)
+// and analysis.html (rendering), so it holds only DOM-free constants and pure
+// helpers — nothing here touches `document` or `self`.
+
+// Bump whenever the report format or the classification rules change, so cached
+// reports from older versions are recomputed instead of reused.
+const ANALYSIS_VERSION = 4;
+
+// Engine score encoding (matches ai.js): mates are ±(EVAL_MATE - plies to mate).
+const EVAL_MATE = 100000;
+const EVAL_MATE_BOUND = EVAL_MATE - 1000;
+
+// Analysis strength presets: per-position time budget and depth cap.
+const ANALYSIS_MODES = {
+    quick:    { label: 'Quick',    timeMs: 150,  maxDepth: 10 },
+    standard: { label: 'Standard', timeMs: 450,  maxDepth: 14 },
+    deep:     { label: 'Deep',     timeMs: 1200, maxDepth: 20 },
+};
+
+// Thresholds are win-PROBABILITY-POINT loss (0-100), not raw centipawns: in an
+// already-decided position, dropping another rook barely changes the outcome,
+// and win probability compresses that tail the way chess.com/lichess do.
+// A move is in the first bucket whose limit it doesn't exceed; above `mistake`
+// it's a Blunder.
 const ANALYSIS_THRESHOLDS = {
-    best:       0,
+    best:       0.25,
     excellent:  2,
     good:       5,
     inaccuracy: 10,
     mistake:    20,
 };
 
-// Standard logistic win-probability curve (same constant lichess uses), converting
-// a centipawn score from the mover's perspective into that mover's win probability
-// (0-100). Mate scores (±tens of thousands from ai.js's negamax) saturate cleanly
-// to 0/100 rather than overflowing.
+// Logistic win-probability curve (lichess's constant): centipawns from the
+// mover's view -> that mover's winning chances, 0-100. Mates saturate to 0/100.
 function winProbability(cp) {
+    if (cp >= EVAL_MATE_BOUND) return 100;
+    if (cp <= -EVAL_MATE_BOUND) return 0;
     return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
 }
 
+function isMateScore(cp) {
+    return Math.abs(cp) >= EVAL_MATE_BOUND;
+}
+
+// Moves until mate (positive: the side whose view `cp` is in delivers it).
+function mateInMoves(cp) {
+    const plies = EVAL_MATE - Math.abs(cp);
+    return Math.sign(cp) * Math.max(1, Math.ceil(plies / 2));
+}
+
+// "+1.4", "-0.3", "M3", "-M2", "0.0"; `cp` from White's view. A delivered mate
+// (0 plies left) shows as "1-0"/"0-1".
+function formatEval(cp) {
+    if (cp === null || cp === undefined) return '';
+    if (isMateScore(cp)) {
+        if (EVAL_MATE - Math.abs(cp) === 0) return cp > 0 ? '1-0' : '0-1';
+        const n = mateInMoves(cp);
+        return (n > 0 ? 'M' : '-M') + Math.abs(n);
+    }
+    const v = cp / 100;
+    return (v > 0 ? '+' : '') + v.toFixed(1);
+}
+
+// Eval-bar / graph fill: White's share of the bar, 0..1 (a softened win curve).
+function evalToBarFraction(cp) {
+    if (isMateScore(cp)) return cp > 0 ? 1 : 0;
+    return winProbability(cp) / 100;
+}
+
+const CATEGORY_ORDER = ['Brilliant', 'Great', 'Best', 'Excellent', 'Good', 'Book', 'Forced',
+                        'Inaccuracy', 'Mistake', 'Miss', 'Blunder'];
+
 const CATEGORY_COLORS = {
-    Brilliant:  '#1baaa6',
+    Brilliant:  '#26c2a3',
+    Great:      '#5c8bb0',
     Best:       '#81b64c',
     Excellent:  '#96bc4b',
-    Good:       '#7a9a52',
-    Book:       '#a67c52',
-    Forced:     '#7c8894',
-    Inaccuracy: '#e6b422',
-    Mistake:    '#e08f2c',
-    Blunder:    '#e0402c',
-    Miss:       '#c0392b',
+    Good:       '#97af8b',
+    Book:       '#a88865',
+    Forced:     '#8a96a3',
+    Inaccuracy: '#f0c15c',
+    Mistake:    '#e6912c',
+    Miss:       '#ee6b55',
+    Blunder:    '#ca3431',
 };
 
-// Standard chess-annotation glyphs (NAG-style), appended directly after the SAN
-// the way real notation does ("Qg5??"), analysis-page-only — the live game in
-// game.html never classifies moves during play. Categories with no traditional
-// symbol (Good/Book) render with color alone, same as before.
+// Glyph shown in the round badge on the board and in the move list.
 const CATEGORY_SYMBOLS = {
     Brilliant:  '!!',
-    Best:       '✓',
-    Excellent:  '!',
-    Good:       '',
-    Book:       '',
+    Great:      '!',
+    Best:       '★',
+    Excellent:  '✓',
+    Good:       '✓',
+    Book:       '≡',
     Forced:     '□',
     Inaccuracy: '?!',
     Mistake:    '?',
+    Miss:       '✗',
     Blunder:    '??',
-    Miss:       '?',
 };
 
-// Builds an inline SVG eval-swing line graph (White's perspective). Used by
-// analysis-page.js on the review page.
-function buildEvalGraphSVG(evalGraph) {
-    const w = 440, h = 120;
-    const n = evalGraph.length;
-    if (n === 0) return '';
-
-    const clamp = (v) => Math.max(-600, Math.min(600, v));
-    const points = evalGraph.map((v, i) => {
-        const x = n === 1 ? w / 2 : (i / (n - 1)) * w;
-        const y = h / 2 - (clamp(v) / 600) * (h / 2 - 4);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(' ');
-
-    return `
-        <svg viewBox="0 0 ${w} ${h}" class="eval-graph-svg" preserveAspectRatio="none">
-            <line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" class="eval-graph-mid" />
-            <polyline points="${points}" class="eval-graph-line" />
-        </svg>
-    `;
-}
+// One-line explanations used in the move caption on the review page.
+const CATEGORY_DESCRIPTIONS = {
+    Brilliant:  'a brilliant sacrifice',
+    Great:      'a great move — the only good one here',
+    Best:       'the best move',
+    Excellent:  'excellent',
+    Good:       'a good move',
+    Book:       'a book move',
+    Forced:     'forced — the only legal move',
+    Inaccuracy: 'an inaccuracy',
+    Mistake:    'a mistake',
+    Miss:       'a missed opportunity',
+    Blunder:    'a blunder',
+};

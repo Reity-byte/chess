@@ -3,161 +3,164 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chess</title>
-    <link rel="stylesheet" href="game.css">
-    <script src="engine.js"   defer></script>
-    <script src="ai.js"       defer></script>
-    <script src="notation.js" defer></script>
-    <script src="sound.js" defer></script>
-    <script src="game-script.js" defer></script>
+    <title>Play · Chess</title>
+    <link rel="stylesheet" href="../theme.css?v=7">
+    <link rel="stylesheet" href="game.css?v=7">
+    <script src="engine.js?v=7" defer></script>
+    <script src="ai.js?v=7" defer></script>
+    <script src="notation.js?v=7" defer></script>
+    <script src="openings.js?v=7" defer></script>
+    <script src="sound.js?v=7" defer></script>
+    <script src="board-ui.js?v=7" defer></script>
+    <script src="game-script.js?v=7" defer></script>
 </head>
-<body class="game-body">
+<body>
 
-    <!-- ── MAIN LAYOUT ──────────────────────────────────────────────── -->
-    <div class="game-layout">
+    <header class="topbar">
+        <a class="brand" href="../site.html">
+            <span class="brand-mark"><span class="piece-icon white knight"></span></span>
+            <span class="brand-name">Chess</span>
+        </a>
+        <nav class="topnav">
+            <a href="game.html" class="active">Play</a>
+            <a href="analysis.html">Review</a>
+            <a href="puzzles.html">Puzzles</a>
+        </nav>
+        <div class="topbar-right">
+            <div class="board-theme-picker" aria-label="Board theme"></div>
+            <button id="soundToggleButton" class="btn btn-ghost btn-icon" aria-label="Mute sound">🔊</button>
+        </div>
+    </header>
 
-        <!-- Board -->
-        <div id="chessboard" class="board"></div>
-
-        <!-- Right sidebar -->
-        <aside class="sidebar">
-
-            <!-- Player tags -->
-            <div class="player-tag player-top">
-                <div class="player-avatar" id="topAvatar">♟</div>
-                <span class="player-name" id="topName">Engine (Black)</span>
-                <span class="player-clock" id="topTime"></span>
+    <main class="play-page">
+        <section class="board-area">
+            <div class="player-strip" id="topStrip">
+                <div class="avatar"><span class="piece-icon black king" id="topAvatar"></span></div>
+                <div class="player-meta">
+                    <span class="player-name"><span id="topName">Engine</span><span class="thinking-dots">•••</span></span>
+                    <div class="captured" id="topCaptured"></div>
+                </div>
+                <div class="clock" id="topClock"></div>
             </div>
 
-            <!-- Move history panel -->
-            <div class="history-panel">
-                <div class="history-scroll">
-                    <table class="history-table">
-                        <thead>
-                            <tr>
-                                <th class="col-num">#</th>
-                                <th class="col-move">White</th>
-                                <th class="col-move">Black</th>
-                            </tr>
-                        </thead>
-                        <tbody id="move-history-body">
-                            <!-- rows injected by JS -->
-                        </tbody>
-                    </table>
+            <div id="chessboard"></div>
+
+            <div class="player-strip" id="bottomStrip">
+                <div class="avatar"><span class="piece-icon white king" id="bottomAvatar"></span></div>
+                <div class="player-meta">
+                    <span class="player-name"><span id="bottomName">You</span><span class="thinking-dots">•••</span></span>
+                    <div class="captured" id="bottomCaptured"></div>
+                </div>
+                <div class="clock" id="bottomClock"></div>
+            </div>
+        </section>
+
+        <aside class="side">
+            <div class="panel status-card">
+                <span class="status-dot" id="statusDot"></span>
+                <div>
+                    <div class="status-text" id="statusText">Ready to play</div>
+                    <div class="status-sub" id="statusSub">Start a new game to begin.</div>
+                </div>
+                <span class="chip" id="levelChip" style="margin-left:auto" hidden></span>
+            </div>
+
+            <div class="panel moves-panel">
+                <div class="panel-header">Moves <span class="muted" id="openingName"></span></div>
+                <div class="moves-scroll" id="movesScroll">
+                    <div class="moves-grid" id="movesGrid"></div>
+                    <div class="moves-empty" id="movesEmpty">No moves yet.</div>
+                </div>
+                <div class="action-grid" id="liveActions">
+                    <button class="btn" id="takebackButton" title="Take back your last move">↶ Takeback</button>
+                    <button class="btn" id="offerDrawButton">½ Draw</button>
+                    <button class="btn btn-danger" id="resignButton">⚑ Resign</button>
+                </div>
+                <div class="panel-footer">
+                    <button class="btn btn-primary" id="newGameButton">New game</button>
+                    <button class="btn btn-icon" id="flipButton" title="Flip board" aria-label="Flip board">⇅</button>
+                    <button class="btn btn-icon" id="copyPgnButton" title="Copy PGN" aria-label="Copy PGN">⧉</button>
+                    <button class="btn btn-icon" id="pgnButton" title="Download PGN" aria-label="Download PGN">⤓</button>
                 </div>
             </div>
-
-            <!-- Player tags -->
-            <div class="player-tag player-bottom">
-                <div class="player-avatar" id="bottomAvatar">♙</div>
-                <span class="player-name" id="bottomName">You (White)</span>
-                <span class="player-clock" id="bottomTime"></span>
-            </div>
-
-            <!-- Buttons -->
-            <div class="game-buttons">
-                <button id="startButton"  class="button confirm">Start</button>
-                <button id="exitButton"   class="button cancel">Exit</button>
-                <button id="soundToggleButton" class="button cancel sound-toggle" aria-label="Mute sound">🔊</button>
-                <button id="pgnButton"     class="button cancel">Download PGN</button>
-                <button id="copyPgnButton" class="button cancel">Copy PGN</button>
-            </div>
-
-            <!-- vs-AI-only live actions: no resignation/draw/takeback in AI vs AI -->
-            <div class="game-buttons" id="liveActionButtons" style="display:none;">
-                <button id="takebackButton"  class="button cancel">Takeback</button>
-                <button id="offerDrawButton" class="button cancel">Offer Draw</button>
-                <button id="resignButton"    class="button cancel">Resign</button>
-            </div>
-
         </aside>
-    </div>
+    </main>
 
-    <!-- ── SETUP MODAL ───────────────────────────────────────────────── -->
+    <!-- ── SETUP ─────────────────────────────────────────────────────────── -->
     <div id="setupModal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <h2>New Game</h2>
+        <div class="modal setup-modal">
+            <h2>New game</h2>
+            <p class="modal-sub">Choose how you want to play.</p>
 
-            <p style="margin-bottom:10px;">Mode</p>
-            <div class="modal-buttons" style="margin-bottom:24px;">
-                <button id="modeHumanBtn" class="button confirm setup-choice selected" data-mode="human">vs AI</button>
-                <button id="modeAiBtn"    class="button cancel setup-choice"  data-mode="ai">AI vs AI</button>
+            <div class="eyebrow field-label">Mode</div>
+            <div class="segmented" data-group="mode">
+                <button data-value="human" class="selected">You vs Engine</button>
+                <button data-value="ai">Engine vs Engine</button>
             </div>
 
             <div id="colorChoiceRow">
-                <p style="margin-bottom:10px;">Play as</p>
-                <div class="modal-buttons" style="margin-bottom:24px;">
-                    <button id="colorWhiteBtn"  class="button confirm setup-choice selected" data-color="white">White</button>
-                    <button id="colorBlackBtn"  class="button cancel setup-choice"  data-color="black">Black</button>
-                    <button id="colorRandomBtn" class="button cancel setup-choice"  data-color="random">Random</button>
+                <div class="eyebrow field-label">Play as</div>
+                <div class="segmented" data-group="color">
+                    <button data-value="white" class="selected">White</button>
+                    <button data-value="random">Random</button>
+                    <button data-value="black">Black</button>
                 </div>
             </div>
 
-            <div id="difficultyRow">
-                <p style="margin-bottom:10px;">Difficulty</p>
-                <div class="modal-buttons" style="margin-bottom:24px;">
-                    <button class="button cancel setup-choice"          data-difficulty="beginner">Beginner</button>
-                    <button class="button cancel setup-choice selected" data-difficulty="intermediate">Intermediate</button>
-                    <button class="button cancel setup-choice"          data-difficulty="expert">Expert</button>
-                    <button class="button cancel setup-choice"          data-difficulty="master">Master</button>
-                </div>
+            <div class="eyebrow field-label">Engine strength</div>
+            <div class="segmented" data-group="difficulty">
+                <button data-value="beginner">Beginner<small>~depth 1</small></button>
+                <button data-value="intermediate" class="selected">Casual<small>~depth 2</small></button>
+                <button data-value="expert">Expert<small>~depth 6</small></button>
+                <button data-value="master">Master<small>full</small></button>
             </div>
 
-            <div id="timeControlRow">
-                <p style="margin-bottom:10px;">Time Control</p>
-                <div class="modal-buttons" style="margin-bottom:24px;">
-                    <button class="button cancel setup-choice"          data-time="5|0">5|0</button>
-                    <button class="button cancel setup-choice"          data-time="10|5">10|5</button>
-                    <button class="button cancel setup-choice"          data-time="15|10">15|10</button>
-                    <button class="button cancel setup-choice selected" data-time="unlimited">Unlimited</button>
-                </div>
+            <div class="eyebrow field-label">Time control</div>
+            <div class="segmented" data-group="time">
+                <button data-value="5|0">5 | 0</button>
+                <button data-value="10|5">10 | 5</button>
+                <button data-value="15|10">15 | 10</button>
+                <button data-value="unlimited" class="selected">∞</button>
             </div>
 
-            <div class="modal-buttons">
-                <button id="beginGameButton" class="button confirm">Begin</button>
+            <div class="modal-actions">
+                <button id="beginGameButton" class="btn btn-primary btn-lg">Start game</button>
+                <button id="cancelSetupButton" class="btn btn-lg">Cancel</button>
             </div>
         </div>
     </div>
 
-    <!-- ── GAME OVER MODAL ───────────────────────────────────────────── -->
+    <!-- ── GAME OVER ─────────────────────────────────────────────────────── -->
     <div id="gameOverModal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <h2 id="modalMessage">Game Over!</h2>
-            <div class="modal-buttons">
-                <button id="restartButton"   class="button confirm">Play Again</button>
-                <button id="reportButton"    class="button cancel">View Game Report</button>
-                <button id="pgnButtonModal"  class="button cancel">Download PGN</button>
-                <button id="copyPgnButtonModal" class="button cancel">Copy PGN</button>
-                <button id="closeModalButton" class="button cancel">Close</button>
+        <div class="modal">
+            <h2 id="gameOverTitle">Game over</h2>
+            <p class="modal-sub" id="gameOverReason"></p>
+            <div class="result-banner">
+                <span class="result-score" id="gameOverScore">½–½</span>
+                <span class="muted" id="gameOverMoves"></span>
+            </div>
+            <div class="modal-actions">
+                <button id="reportButton" class="btn btn-primary btn-lg btn-block">★ Game Review</button>
+                <button id="restartButton" class="btn">New game</button>
+                <button id="copyPgnButtonModal" class="btn">Copy PGN</button>
+                <button id="pgnButtonModal" class="btn">Download PGN</button>
+                <button id="closeModalButton" class="btn btn-ghost">Close</button>
             </div>
         </div>
     </div>
 
-    <!-- ── PGN TEXT MODAL ───────────────────────────────────────────── -->
+    <!-- ── PGN TEXT ──────────────────────────────────────────────────────── -->
     <div id="pgnModal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <h2 style="margin-bottom:16px">PGN</h2>
-            <textarea id="pgnTextArea" class="pgn-text-area" rows="10" readonly></textarea>
-            <div class="modal-buttons" style="margin-top:16px;">
-                <button id="copyPgnConfirmButton" class="button confirm">Copy to Clipboard</button>
-                <button id="closePgnModalButton" class="button cancel">Close</button>
+        <div class="modal">
+            <h2>PGN</h2>
+            <p class="modal-sub">Paste it into any chess site or the Review page.</p>
+            <textarea id="pgnTextArea" class="pgn-input" rows="10" readonly style="margin-top:16px"></textarea>
+            <div class="modal-actions">
+                <button id="copyPgnConfirmButton" class="btn btn-primary">Copy to clipboard</button>
+                <button id="closePgnModalButton" class="btn">Close</button>
             </div>
         </div>
     </div>
-
-    <!-- ── PROMOTION MODAL ───────────────────────────────────────────── -->
-    <div id="promotionModal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <h2 style="margin-bottom:20px">Promote Pawn</h2>
-            <div class="promotion-options">
-                <img id="promo-queen"  class="promo-piece" src="" data-type="queen">
-                <img id="promo-rook"   class="promo-piece" src="" data-type="rook">
-                <img id="promo-bishop" class="promo-piece" src="" data-type="bishop">
-                <img id="promo-knight" class="promo-piece" src="" data-type="knight">
-            </div>
-        </div>
-    </div>
-
 
 </body>
 </html>

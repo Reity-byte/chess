@@ -1,29 +1,47 @@
-class ChessPiece {      
+const PIECE_ORDER = { pawn: 0, knight: 1, bishop: 2, rook: 3, queen: 4, king: 5 };
+
+// `code` (0-5, see PIECE_ORDER) and `white` mirror `type`/`color` as plain
+// numbers/booleans so the search's hot loops never do string-keyed lookups.
+// `type` stays assignable (promotion code sets it directly) and keeps `code` in sync.
+class ChessPiece {
     constructor(type, color) {
-        this.type = type;
+        this._type = type;
+        this.code = PIECE_ORDER[type];
         this.color = color;
+        this.white = color === 'white';
         this.hasMoved = false;
-        // Generate a random ID so the UI can track this specific piece for animations!
-        this.domId = 'piece-' + Math.random().toString(36).substr(2, 9);
     }
+    get type() { return this._type; }
+    set type(t) { this._type = t; this.code = PIECE_ORDER[t]; }
 }
 
 let currentTurn = 'white';
 let lastMove = null;
 
-// --- DRAW DETECTION STATE ---
-// positionHistory maps a board FEN-like key -> count, for threefold repetition
-let positionHistory = {};
+// ─── DRAW DETECTION STATE ───────────────────────────────────────────────────────
+// positionHistory maps a numeric position hash (see getBoardKey) -> occurrence
+// count, for threefold repetition. A Map with number keys avoids the
+// number->string conversion a plain object would pay on every search lookup.
+let positionHistory = new Map();
 // halfMoveClock counts moves since last pawn move or capture (for 50-move rule)
 let halfMoveClock = 0;
+// The same recorded positions in game order (hash halves), which the search
+// scans backwards for repetitions instead of doing Map lookups per node.
+let hashHistoryLo = [], hashHistoryHi = [];
+
+// ─── DIRECTION TABLES (hoisted so move generation never allocates them) ────────
+const KNIGHT_DX = [2, 2, -2, -2, 1, 1, -1, -1];
+const KNIGHT_DY = [1, -1, 1, -1, 2, -2, 2, -2];
+const KING_DX   = [1, 1, 1, 0, 0, -1, -1, -1];
+const KING_DY   = [1, 0, -1, 1, -1, 1, 0, -1];
+const DIAG_DX   = [1, 1, -1, -1];
+const DIAG_DY   = [1, -1, 1, -1];
+const ORTHO_DX  = [1, -1, 0, 0];
+const ORTHO_DY  = [0, 0, 1, -1];
 
 function initializeBoard() {
     const board = [];
-    for (let y = 0; y < 8; y++) {
-        const row = [];
-        for (let x = 0; x < 8; x++) row.push(null);
-        board.push(row);
-    }
+    for (let y = 0; y < 8; y++) board.push(new Array(8).fill(null));
     const backRow = ['rook','knight','bishop','queen','king','bishop','knight','rook'];
     for (let x = 0; x < 8; x++) {
         board[0][x] = new ChessPiece(backRow[x], 'black');
@@ -40,41 +58,99 @@ function resetGame() {
     gameState = initializeBoard();
     currentTurn = 'white';
     lastMove = null;
-    positionHistory = {};
+    positionHistory = new Map();
+    hashHistoryLo = []; hashHistoryHi = [];
     halfMoveClock = 0;
+    kingPos.white.x = 4; kingPos.white.y = 7;
+    kingPos.black.x = 4; kingPos.black.y = 0;
 }
 
-// ─── POSITION HASHING (for threefold repetition) ──────────────────────────────
-function getBoardKey() {
-    let key = currentTurn + '|';
+// ─── ZOBRIST HASHING ────────────────────────────────────────────────────────────
+// Positions are identified by a 53-bit Zobrist hash (two 32-bit halves) instead
+// of a 64-character string. It encodes exactly what the old string key did:
+// piece placement, side to move, the four castling rights, and the en-passant
+// file whenever the last move was a double pawn push. The search (ai.js) uses
+// the same keys on its own board and updates them incrementally; positions on
+// the real board are hashed from scratch via computeHash().
+const Z_PIECE_LO = new Int32Array(12 * 64), Z_PIECE_HI = new Int32Array(12 * 64);
+const Z_CASTLE_LO = new Int32Array(16),     Z_CASTLE_HI = new Int32Array(16);
+const Z_EP_LO = new Int32Array(8),          Z_EP_HI = new Int32Array(8);
+let Z_SIDE_LO = 0, Z_SIDE_HI = 0;
+
+(function seedZobrist() {
+    // xorshift32 with a fixed seed: deterministic across page loads and workers,
+    // so a hash recorded on the main thread means the same thing in a worker.
+    let s = 0x9E3779B9;
+    const next = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return s | 0; };
+    for (let i = 0; i < Z_PIECE_LO.length; i++) { Z_PIECE_LO[i] = next(); Z_PIECE_HI[i] = next(); }
+    for (let i = 0; i < 16; i++) { Z_CASTLE_LO[i] = next(); Z_CASTLE_HI[i] = next(); }
+    for (let i = 0; i < 8; i++)  { Z_EP_LO[i] = next(); Z_EP_HI[i] = next(); }
+    Z_SIDE_LO = next(); Z_SIDE_HI = next();
+    Z_CASTLE_LO[0] = 0; Z_CASTLE_HI[0] = 0; // "no rights" contributes nothing
+})();
+
+function pieceIndex(p) {
+    return p.white ? p.code : p.code + 6;
+}
+
+// Bitmask of castling rights still available: 1=K, 2=Q, 4=k, 8=q.
+function castleRightsMask() {
+    let m = 0;
+    const wk = gameState[7][4];
+    if (wk && wk.type === 'king' && wk.color === 'white' && !wk.hasMoved) {
+        const r1 = gameState[7][7], r2 = gameState[7][0];
+        if (r1 && r1.type === 'rook' && r1.color === 'white' && !r1.hasMoved) m |= 1;
+        if (r2 && r2.type === 'rook' && r2.color === 'white' && !r2.hasMoved) m |= 2;
+    }
+    const bk = gameState[0][4];
+    if (bk && bk.type === 'king' && bk.color === 'black' && !bk.hasMoved) {
+        const r1 = gameState[0][7], r2 = gameState[0][0];
+        if (r1 && r1.type === 'rook' && r1.color === 'black' && !r1.hasMoved) m |= 4;
+        if (r2 && r2.type === 'rook' && r2.color === 'black' && !r2.hasMoved) m |= 8;
+    }
+    return m;
+}
+
+function epFileOf(lm) {
+    return lm && lm.piece && lm.piece.type === 'pawn' && Math.abs(lm.fromY - lm.toY) === 2 ? lm.toX : -1;
+}
+
+function computeHash() {
+    let lo = 0, hi = 0;
     for (let y = 0; y < 8; y++) {
+        const row = gameState[y];
         for (let x = 0; x < 8; x++) {
-            const p = gameState[y][x];
-            key += p ? `${p.color[0]}${p.type[0]}` : '.';
+            const p = row[x];
+            if (!p) continue;
+            const i = pieceIndex(p) * 64 + y * 8 + x;
+            lo ^= Z_PIECE_LO[i]; hi ^= Z_PIECE_HI[i];
         }
-        key += '/';
     }
-    // Castling rights: encode only the four king/rook pairs that can still castle.
-    // Using per-piece hasMoved flags caused identical positions differing only in a
-    // non-castling piece's hasMoved to get different keys (false-negative draws).
-    const wk  = gameState[7][4], wkr = gameState[7][7], wqr = gameState[7][0];
-    const bk  = gameState[0][4], bkr = gameState[0][7], bqr = gameState[0][0];
-    key += (wk && wk.type==='king' && !wk.hasMoved && wkr && wkr.type==='rook' && !wkr.hasMoved ? 'K' : '');
-    key += (wk && wk.type==='king' && !wk.hasMoved && wqr && wqr.type==='rook' && !wqr.hasMoved ? 'Q' : '');
-    key += (bk && bk.type==='king' && !bk.hasMoved && bkr && bkr.type==='rook' && !bkr.hasMoved ? 'k' : '');
-    key += (bk && bk.type==='king' && !bk.hasMoved && bqr && bqr.type==='rook' && !bqr.hasMoved ? 'q' : '');
-    // En passant target must be part of the position key.
-    if (lastMove && lastMove.piece && lastMove.piece.type === 'pawn'
-        && Math.abs(lastMove.fromY - lastMove.toY) === 2) {
-        key += `|ep${lastMove.toX}`;
-    }
-    return key;
+    const cr = castleRightsMask();
+    lo ^= Z_CASTLE_LO[cr]; hi ^= Z_CASTLE_HI[cr];
+    const ep = epFileOf(lastMove);
+    if (ep >= 0) { lo ^= Z_EP_LO[ep]; hi ^= Z_EP_HI[ep]; }
+    if (currentTurn === 'black') { lo ^= Z_SIDE_LO; hi ^= Z_SIDE_HI; }
+    return { lo, hi };
+}
+
+// Folds the two halves into one exact JS number (21 + 32 bits) usable as a Map key.
+function hashKey(lo, hi) {
+    return (hi & 0x1FFFFF) * 4294967296 + (lo >>> 0);
+}
+
+function getBoardKey() {
+    const h = computeHash();
+    return hashKey(h.lo, h.hi);
 }
 
 function recordPosition() {
-    const key = getBoardKey();
-    positionHistory[key] = (positionHistory[key] || 0) + 1;
-    return positionHistory[key];
+    const h = computeHash();
+    hashHistoryLo.push(h.lo); hashHistoryHi.push(h.hi);
+    const key = hashKey(h.lo, h.hi);
+    const n = (positionHistory.get(key) || 0) + 1;
+    positionHistory.set(key, n);
+    return n;
 }
 
 // ─── INSUFFICIENT MATERIAL CHECK ──────────────────────────────────────────────
@@ -83,27 +159,26 @@ function isInsufficientMaterial() {
     for (let y = 0; y < 8; y++) {
         for (let x = 0; x < 8; x++) {
             const p = gameState[y][x];
-            if (p && p.type !== 'king') pieces[p.color].push({ type: p.type, x, y });
+            if (p && p.type !== 'king') {
+                if (pieces[p.color].length >= 2) return false;
+                pieces[p.color].push({ type: p.type, x, y });
+            }
         }
     }
     const w = pieces.white;
     const b = pieces.black;
+    const isMinor = (p) => p.type === 'bishop' || p.type === 'knight';
 
-    // K vs K
-    if (w.length === 0 && b.length === 0) return true;
-    // K vs K+B or K vs K+N
-    if (w.length === 0 && b.length === 1 && (b[0].type === 'bishop' || b[0].type === 'knight')) return true;
-    if (b.length === 0 && w.length === 1 && (w[0].type === 'bishop' || w[0].type === 'knight')) return true;
-    // K+B vs K+B same color squares
+    if (w.length === 0 && b.length === 0) return true;                       // K vs K
+    if (w.length === 0 && b.length === 1 && isMinor(b[0])) return true;     // K vs K+minor
+    if (b.length === 0 && w.length === 1 && isMinor(w[0])) return true;
     if (w.length === 1 && b.length === 1 && w[0].type === 'bishop' && b[0].type === 'bishop') {
-        const wLight = (w[0].x + w[0].y) % 2;
-        const bLight = (b[0].x + b[0].y) % 2;
-        if (wLight === bLight) return true;
+        return (w[0].x + w[0].y) % 2 === (b[0].x + b[0].y) % 2;              // same-colored bishops
     }
     return false;
 }
 
-// ─── MOVE PIECE ───────────────────────────────────────────────────────────────
+// ─── MOVE PIECE (real moves: UI, replays) ────────────────────────────────────
 function movePiece(fromX, fromY, toX, toY, moveDetails = null) {
     const movingPiece = gameState[fromY][fromX];
     const capturedPiece = gameState[toY][toX];
@@ -121,182 +196,157 @@ function movePiece(fromX, fromY, toX, toY, moveDetails = null) {
         gameState[moveDetails.captureY][moveDetails.captureX] = null;
     }
 
-    // Execute the move
     gameState[toY][toX] = movingPiece;
     gameState[fromY][fromX] = null;
-    gameState[toY][toX].hasMoved = true;
+    movingPiece.hasMoved = true;
+    if (movingPiece.type === 'king') { kingPos[movingPiece.color].x = toX; kingPos[movingPiece.color].y = toY; }
 
-    lastMove = { piece: gameState[toY][toX], fromX, fromY, toX, toY };
+    lastMove = { piece: movingPiece, fromX, fromY, toX, toY };
 
-    // Update half-move clock (reset on pawn move or capture, else increment)
     if (movingPiece.type === 'pawn' || capturedPiece || (moveDetails && moveDetails.isEnPassant)) {
         halfMoveClock = 0;
     } else {
         halfMoveClock++;
     }
 
-    // Promotion check
+    // Promotion: the caller picks the piece and flips the turn afterwards.
     const isPromotionMove = movingPiece.type === 'pawn' && (toY === 0 || toY === 7);
     if (!isPromotionMove) {
         currentTurn = currentTurn === 'white' ? 'black' : 'white';
     }
-
     return isPromotionMove;
 }
 
+// Plays a fully-resolved move including its promotion choice (defaults to a
+// queen) and flips the turn. The one helper every replay path shares.
+function applyMoveWithPromotion(move, promo) {
+    const isPromoting = movePiece(move.fromX, move.fromY, move.toX, move.toY, move.details);
+    if (isPromoting) {
+        gameState[move.toY][move.toX].type = promo || 'queen';
+        currentTurn = currentTurn === 'white' ? 'black' : 'white';
+    }
+    return isPromoting;
+}
+
 // ─── PSEUDO-LEGAL MOVE GENERATION ────────────────────────────────────────────
-function getPseudoLegalMoves(x, y, checkCastling = true) {
-    const piece = gameState[y][x];
-    if (!piece) return [];
+// Pushes { fromX, fromY, toX, toY, details } records into `out`. `details` is the
+// object movePiece() expects (it carries the castling / en-passant extras).
+// capturesOnly restricts output to captures, en passant, and promotions — the
+// "tactical" moves quiescence search looks at.
+function pushMove(out, fx, fy, tx, ty, details) {
+    out.push({ fromX: fx, fromY: fy, toX: tx, toY: ty, details: details || { x: tx, y: ty } });
+}
 
-    const moves = [];
+function genSlides(out, x, y, color, dxs, dys, capturesOnly) {
+    for (let d = 0; d < dxs.length; d++) {
+        const dx = dxs[d], dy = dys[d];
+        let cx = x + dx, cy = y + dy;
+        while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
+            const t = gameState[cy][cx];
+            if (t === null) {
+                if (!capturesOnly) pushMove(out, x, y, cx, cy);
+            } else {
+                if (t.color !== color) pushMove(out, x, y, cx, cy);
+                break;
+            }
+            cx += dx; cy += dy;
+        }
+    }
+}
 
-    if (piece.type === 'pawn') {
-        const direction = piece.color === 'white' ? -1 : 1;
-        const startRow  = piece.color === 'white' ? 6 : 1;
+function genSteps(out, x, y, color, dxs, dys, capturesOnly) {
+    for (let d = 0; d < dxs.length; d++) {
+        const cx = x + dxs[d], cy = y + dys[d];
+        if (cx < 0 || cx >= 8 || cy < 0 || cy >= 8) continue;
+        const t = gameState[cy][cx];
+        if (t === null ? !capturesOnly : t.color !== color) pushMove(out, x, y, cx, cy);
+    }
+}
 
-        // Forward
-        if (y + direction >= 0 && y + direction < 8) {
-            if (gameState[y + direction][x] === null) {
-                moves.push({ x, y: y + direction });
-                if (y === startRow && gameState[y + 2 * direction][x] === null) {
-                    moves.push({ x, y: y + direction * 2 });
+function genPieceMoves(out, x, y, piece, capturesOnly, checkCastling) {
+    const color = piece.color;
+    switch (piece.type) {
+        case 'pawn': {
+            const dir = color === 'white' ? -1 : 1;
+            const startRow = color === 'white' ? 6 : 1;
+            const ny = y + dir;
+            if (ny < 0 || ny > 7) return;
+            const promoRank = ny === 0 || ny === 7;
+            if (gameState[ny][x] === null && (!capturesOnly || promoRank)) {
+                pushMove(out, x, y, x, ny);
+                if (!capturesOnly && y === startRow && gameState[y + 2 * dir][x] === null) {
+                    pushMove(out, x, y, x, y + 2 * dir);
                 }
             }
-        }
-        // Diagonal captures
-        for (const dx of [-1, 1]) {
-            const nx = x + dx;
-            const ny = y + direction;
-            if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
-                const target = gameState[ny][nx];
-                if (target && target.color !== piece.color) moves.push({ x: nx, y: ny });
-            }
-        }
-        // En passant
-        if (lastMove) {
-            for (const dx of [-1, 1]) {
+            for (let dx = -1; dx <= 1; dx += 2) {
                 const nx = x + dx;
-                if (nx < 0 || nx >= 8) continue;
-                const adjacent = gameState[y][nx];
-                if (adjacent && adjacent.color !== piece.color && adjacent.type === 'pawn'
-                    && lastMove.toX === nx && lastMove.toY === y
-                    && Math.abs(lastMove.fromY - lastMove.toY) === 2) {
-                    moves.push({ x: nx, y: y + direction, isEnPassant: true, captureX: nx, captureY: y });
+                if (nx < 0 || nx > 7) continue;
+                const t = gameState[ny][nx];
+                if (t && t.color !== color) pushMove(out, x, y, nx, ny);
+            }
+            // En passant
+            const lm = lastMove;
+            if (lm && lm.toY === y && Math.abs(lm.toX - x) === 1 && Math.abs(lm.fromY - lm.toY) === 2) {
+                const adj = gameState[y][lm.toX];
+                if (adj && adj === lm.piece && adj.type === 'pawn' && adj.color !== color) {
+                    pushMove(out, x, y, lm.toX, ny, { x: lm.toX, y: ny, isEnPassant: true, captureX: lm.toX, captureY: y });
                 }
             }
+            return;
         }
-
-    } else if (piece.type === 'knight') {
-        for (const [dx, dy] of [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]) {
-            const nx = x + dx, ny = y + dy;
-            if (isValidLanding(nx, ny, piece.color)) moves.push({ x: nx, y: ny });
-        }
-
-    } else if (piece.type === 'bishop') {
-        for (const [dx, dy] of [[1,1],[1,-1],[-1,1],[-1,-1]]) {
-            let cx = x + dx, cy = y + dy;
-            while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
-                const t = gameState[cy][cx];
-                if (t === null) { moves.push({ x: cx, y: cy }); cx += dx; cy += dy; }
-                else { if (t.color !== piece.color) moves.push({ x: cx, y: cy }); break; }
+        case 'knight': genSteps(out, x, y, color, KNIGHT_DX, KNIGHT_DY, capturesOnly); return;
+        case 'bishop': genSlides(out, x, y, color, DIAG_DX, DIAG_DY, capturesOnly); return;
+        case 'rook':   genSlides(out, x, y, color, ORTHO_DX, ORTHO_DY, capturesOnly); return;
+        case 'queen':
+            genSlides(out, x, y, color, DIAG_DX, DIAG_DY, capturesOnly);
+            genSlides(out, x, y, color, ORTHO_DX, ORTHO_DY, capturesOnly);
+            return;
+        case 'king': {
+            genSteps(out, x, y, color, KING_DX, KING_DY, capturesOnly);
+            if (capturesOnly || !checkCastling || piece.hasMoved) return;
+            const enemy = color === 'white' ? 'black' : 'white';
+            if (isSquareAttacked(x, y, enemy)) return;
+            const row = gameState[y];
+            const kRook = row[7];
+            if (kRook && kRook.type === 'rook' && kRook.color === color && !kRook.hasMoved
+                && row[5] === null && row[6] === null && !isSquareAttacked(5, y, enemy)) {
+                pushMove(out, x, y, 6, y, { x: 6, y, isCastle: true, rookFromX: 7, rookToX: 5 });
             }
-        }
-
-    } else if (piece.type === 'rook') {
-        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-            let cx = x + dx, cy = y + dy;
-            while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
-                const t = gameState[cy][cx];
-                if (t === null) { moves.push({ x: cx, y: cy }); cx += dx; cy += dy; }
-                else { if (t.color !== piece.color) moves.push({ x: cx, y: cy }); break; }
-            }
-        }
-
-    } else if (piece.type === 'queen') {
-        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) {
-            let cx = x + dx, cy = y + dy;
-            while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
-                const t = gameState[cy][cx];
-                if (t === null) { moves.push({ x: cx, y: cy }); cx += dx; cy += dy; }
-                else { if (t.color !== piece.color) moves.push({ x: cx, y: cy }); break; }
-            }
-        }
-
-    } else if (piece.type === 'king') {
-        for (let dx = -1; dx <= 1; dx++) {
-            for (let dy = -1; dy <= 1; dy++) {
-                if (dx === 0 && dy === 0) continue;
-                if (isValidLanding(x + dx, y + dy, piece.color)) moves.push({ x: x + dx, y: y + dy });
-            }
-        }
-        // Castling
-        if (checkCastling && !piece.hasMoved) {
-            const enemy = piece.color === 'white' ? 'black' : 'white';
-            if (!isSquareAttacked(x, y, enemy)) {
-                // Kingside
-                const kRook = gameState[y][7];
-                if (kRook && kRook.type === 'rook' && !kRook.hasMoved
-                    && gameState[y][5] === null && gameState[y][6] === null
-                    && !isSquareAttacked(5, y, enemy)) {
-                    moves.push({ x: 6, y, isCastle: true, rookFromX: 7, rookToX: 5 });
-                }
-                // Queenside
-                const qRook = gameState[y][0];
-                if (qRook && qRook.type === 'rook' && !qRook.hasMoved
-                    && gameState[y][1] === null && gameState[y][2] === null && gameState[y][3] === null
-                    && !isSquareAttacked(3, y, enemy)) {
-                    moves.push({ x: 2, y, isCastle: true, rookFromX: 0, rookToX: 3 });
-                }
+            const qRook = row[0];
+            if (qRook && qRook.type === 'rook' && qRook.color === color && !qRook.hasMoved
+                && row[1] === null && row[2] === null && row[3] === null && !isSquareAttacked(3, y, enemy)) {
+                pushMove(out, x, y, 2, y, { x: 2, y, isCastle: true, rookFromX: 0, rookToX: 3 });
             }
         }
     }
-
-    return moves;
-}
-
-function isValidLanding(tx, ty, myColor) {
-    if (tx < 0 || tx >= 8 || ty < 0 || ty >= 8) return false;
-    const t = gameState[ty][tx];
-    return !t || t.color !== myColor;
 }
 
 // Reverse "who attacks this square" lookup: walk outward from (tx,ty) per
-// piece-type pattern and check what's there, instead of regenerating every
-// enemy piece's full pseudo-legal move list (was the dominant cost in the
-// search - profiled at ~35 getPseudoLegalMoves() calls per search node).
+// piece-type pattern and check what's there.
 function isSquareAttacked(tx, ty, enemyColor) {
-    // Pawn: an enemy pawn attacks (tx,ty) if it sits one diagonal step "behind"
-    // the attacked square from the enemy's own forward direction.
-    const pawnDir = enemyColor === 'white' ? 1 : -1;
-    for (const dx of [-1, 1]) {
-        const px = tx + dx, py = ty + pawnDir;
-        if (px >= 0 && px < 8 && py >= 0 && py < 8) {
-            const p = gameState[py][px];
-            if (p && p.type === 'pawn' && p.color === enemyColor) return true;
-        }
+    // Pawns: an enemy pawn attacks (tx,ty) from one diagonal step "behind" it.
+    const py = ty + (enemyColor === 'white' ? 1 : -1);
+    if (py >= 0 && py < 8) {
+        const row = gameState[py];
+        if (tx > 0) { const p = row[tx - 1]; if (p && p.type === 'pawn' && p.color === enemyColor) return true; }
+        if (tx < 7) { const p = row[tx + 1]; if (p && p.type === 'pawn' && p.color === enemyColor) return true; }
     }
-    // Knight
-    for (const [dx, dy] of [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]) {
-        const nx = tx + dx, ny = ty + dy;
+    for (let d = 0; d < 8; d++) {
+        const nx = tx + KNIGHT_DX[d], ny = ty + KNIGHT_DY[d];
         if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
             const p = gameState[ny][nx];
             if (p && p.type === 'knight' && p.color === enemyColor) return true;
         }
     }
-    // King (adjacency)
-    for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-            if (dx === 0 && dy === 0) continue;
-            const nx = tx + dx, ny = ty + dy;
-            if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
-                const p = gameState[ny][nx];
-                if (p && p.type === 'king' && p.color === enemyColor) return true;
-            }
+    for (let d = 0; d < 8; d++) {
+        const nx = tx + KING_DX[d], ny = ty + KING_DY[d];
+        if (nx >= 0 && nx < 8 && ny >= 0 && ny < 8) {
+            const p = gameState[ny][nx];
+            if (p && p.type === 'king' && p.color === enemyColor) return true;
         }
     }
-    // Sliding: bishop/queen on diagonals
-    for (const [dx, dy] of [[1,1],[1,-1],[-1,1],[-1,-1]]) {
+    for (let d = 0; d < 4; d++) {
+        const dx = DIAG_DX[d], dy = DIAG_DY[d];
         let cx = tx + dx, cy = ty + dy;
         while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
             const p = gameState[cy][cx];
@@ -307,8 +357,8 @@ function isSquareAttacked(tx, ty, enemyColor) {
             cx += dx; cy += dy;
         }
     }
-    // Sliding: rook/queen on files/ranks
-    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    for (let d = 0; d < 4; d++) {
+        const dx = ORTHO_DX[d], dy = ORTHO_DY[d];
         let cx = tx + dx, cy = ty + dy;
         while (cx >= 0 && cx < 8 && cy >= 0 && cy < 8) {
             const p = gameState[cy][cx];
@@ -322,108 +372,140 @@ function isSquareAttacked(tx, ty, enemyColor) {
     return false;
 }
 
+// ─── KING LOCATION CACHE ─────────────────────────────────────────────────────
+// findKing() used to scan all 64 squares and was called once per candidate move
+// during legality checks. The cache is verified on every read (falls back to a
+// scan if stale), so any code that edits gameState directly stays correct.
+const kingPos = { white: { x: 4, y: 7 }, black: { x: 4, y: 0 } };
+
 function findKing(color) {
-    for (let y = 0; y < 8; y++)
-        for (let x = 0; x < 8; x++)
-            if (gameState[y][x]?.type === 'king' && gameState[y][x]?.color === color)
-                return { x, y };
+    const c = kingPos[color];
+    const p = gameState[c.y][c.x];
+    if (p && p.type === 'king' && p.color === color) return c;
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const q = gameState[y][x];
+            if (q && q.type === 'king' && q.color === color) { c.x = x; c.y = y; return c; }
+        }
+    }
     return null;
 }
 
-// Make `move` on the board, check whether `(x,y)`'s side is left in check, then
-// restore. Shared by getvalidMoves() and the AI's capture-only generator so the
-// (expensive) full-board king-safety check is only ever done once per candidate move.
-function isMoveLegal(x, y, move) {
-    const piece = gameState[y][x];
+function isInCheck(color) {
+    const kp = findKing(color);
+    return !!kp && isSquareAttacked(kp.x, kp.y, color === 'white' ? 'black' : 'white');
+}
 
-    const captured = gameState[move.y][move.x];
+// Make the move on the board, test whether the mover's king is attacked, restore.
+function leavesKingSafe(move, kx, ky, enemy) {
+    const { fromX, fromY, toX, toY, details } = move;
+    const piece = gameState[fromY][fromX];
+    const captured = gameState[toY][toX];
     let epCaptured = null;
-    if (move.isEnPassant) { epCaptured = gameState[move.captureY][move.captureX]; gameState[move.captureY][move.captureX] = null; }
+    if (details.isEnPassant) {
+        epCaptured = gameState[details.captureY][details.captureX];
+        gameState[details.captureY][details.captureX] = null;
+    }
+    gameState[toY][toX] = piece;
+    gameState[fromY][fromX] = null;
 
-    gameState[move.y][move.x] = piece;
-    gameState[y][x] = null;
+    const safe = !isSquareAttacked(kx, ky, enemy);
 
-    const kp = findKing(piece.color);
-    const safe = kp && !isSquareAttacked(kp.x, kp.y, piece.color === 'white' ? 'black' : 'white');
-
-    // Restore
-    gameState[y][x] = piece;
-    gameState[move.y][move.x] = captured;
-    if (move.isEnPassant) gameState[move.captureY][move.captureX] = epCaptured;
-
+    gameState[fromY][fromX] = piece;
+    gameState[toY][toX] = captured;
+    if (details.isEnPassant) gameState[details.captureY][details.captureX] = epCaptured;
     return safe;
 }
 
+// Filters pseudo-legal moves of one side down to legal ones. The expensive
+// make/test/unmake is skipped for the common case: when the side isn't in check,
+// a non-king, non-en-passant move can only expose its king if the moving piece
+// sits on a line (rank/file/diagonal) with that king — i.e. it might be pinned.
+function filterLegal(moves, color) {
+    const kp = findKing(color);
+    if (!kp) return moves;
+    const kx = kp.x, ky = kp.y;
+    const enemy = color === 'white' ? 'black' : 'white';
+    const inCheck = isSquareAttacked(kx, ky, enemy);
+    let n = 0;
+    for (let i = 0; i < moves.length; i++) {
+        const m = moves[i];
+        let legal;
+        if (m.fromX === kx && m.fromY === ky) {
+            legal = leavesKingSafe(m, m.toX, m.toY, enemy);
+        } else if (!inCheck && !m.details.isEnPassant) {
+            const dx = m.fromX - kx, dy = m.fromY - ky;
+            legal = (dx !== 0 && dy !== 0 && dx !== dy && dx !== -dy) || leavesKingSafe(m, kx, ky, enemy);
+        } else {
+            legal = leavesKingSafe(m, kx, ky, enemy);
+        }
+        if (legal) moves[n++] = m;
+    }
+    moves.length = n;
+    return moves;
+}
+
+// All legal moves for `color` as { fromX, fromY, toX, toY, details } records.
+function generateMoves(color, capturesOnly = false) {
+    const out = [];
+    for (let y = 0; y < 8; y++) {
+        const row = gameState[y];
+        for (let x = 0; x < 8; x++) {
+            const p = row[x];
+            if (p && p.color === color) genPieceMoves(out, x, y, p, capturesOnly, true);
+        }
+    }
+    return filterLegal(out, color);
+}
+
+function getAllValidMoves(color) {
+    return generateMoves(color, false);
+}
+
+function hasAnyLegalMove(color) {
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            if (!p || p.color !== color) continue;
+            const out = [];
+            genPieceMoves(out, x, y, p, false, true);
+            if (filterLegal(out, color).length > 0) return true;
+        }
+    }
+    return false;
+}
+
+// Legal destinations for the piece on (x, y), as the { x, y, ...details } list
+// the UI uses for move hints and for movePiece().
 function getvalidMoves(x, y) {
     const piece = gameState[y][x];
     if (!piece) return [];
-    return getPseudoLegalMoves(x, y).filter(move => isMoveLegal(x, y, move));
+    const out = [];
+    genPieceMoves(out, x, y, piece, false, true);
+    return filterLegal(out, piece.color).map(m => m.details);
 }
 
 // ─── CHECK / CHECKMATE SUFFIX (for SAN, based on the CURRENT real board) ─────
 // colorToMove: the side that must move next, i.e. the side that might be in check.
 function getCheckSuffix(colorToMove) {
-    const kp = findKing(colorToMove);
-    if (!kp) return '';
-    const enemy = colorToMove === 'white' ? 'black' : 'white';
-    if (!isSquareAttacked(kp.x, kp.y, enemy)) return '';
-
-    let hasMove = false;
-    outer: for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const p = gameState[y][x];
-            if (p && p.color === colorToMove && getvalidMoves(x, y).length > 0) {
-                hasMove = true;
-                break outer;
-            }
-        }
-    }
-    return hasMove ? '+' : '#';
+    if (!isInCheck(colorToMove)) return '';
+    return hasAnyLegalMove(colorToMove) ? '+' : '#';
 }
 
-// ─── GAME OVER CHECK (checkmate, stalemate, draws) ───────────────────────────
-// Returns true if the game has ended (and schedules the modal), false otherwise.
-function checkGameOver() {
-    // 1. Threefold repetition
-    const repCount = positionHistory[getBoardKey()] || 0;
-    if (repCount >= 3) {
-        setTimeout(() => showGameOverModal("Draw by Threefold Repetition!"), 100);
-        return true;
-    }
+// ─── GAME STATUS (checkmate, stalemate, draws) ───────────────────────────────
+// Returns null while the game is still going, otherwise
+// { reason, result, message } — reason is checkmate | stalemate | threefold |
+// fifty-move | insufficient, result a PGN token.
+function getGameStatus() {
+    const draw = (reason, message) => ({ reason, result: '1/2-1/2', message });
+    if ((positionHistory.get(getBoardKey()) || 0) >= 3) return draw('threefold', 'Draw by threefold repetition');
+    if (halfMoveClock >= 100) return draw('fifty-move', 'Draw by the 50-move rule');
+    if (isInsufficientMaterial()) return draw('insufficient', 'Draw by insufficient material');
+    if (hasAnyLegalMove(currentTurn)) return null;
 
-    // 2. 50-move rule
-    if (halfMoveClock >= 100) {  // 100 half-moves = 50 full moves
-        setTimeout(() => showGameOverModal("Draw by 50-Move Rule!"), 100);
-        return true;
+    if (isInCheck(currentTurn)) {
+        const winner = currentTurn === 'white' ? 'Black' : 'White';
+        return { reason: 'checkmate', result: winner === 'White' ? '1-0' : '0-1', message: `Checkmate — ${winner} wins` };
     }
-
-    // 3. Insufficient material
-    if (isInsufficientMaterial()) {
-        setTimeout(() => showGameOverModal("Draw by Insufficient Material!"), 100);
-        return true;
-    }
-
-    // 4. Checkmate / Stalemate
-    let hasAnyMove = false;
-    outer: for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const p = gameState[y][x];
-            if (p && p.color === currentTurn && getvalidMoves(x, y).length > 0) {
-                hasAnyMove = true;
-                break outer;
-            }
-        }
-    }
-    if (hasAnyMove) return false;
-
-    const kp = findKing(currentTurn);
-    const enemy = currentTurn === 'white' ? 'black' : 'white';
-    const inCheck = kp && isSquareAttacked(kp.x, kp.y, enemy);
-
-    if (inCheck) {
-        setTimeout(() => showGameOverModal(`Checkmate! ${enemy.toUpperCase()} Wins! ♛`), 100);
-    } else {
-        setTimeout(() => showGameOverModal("Stalemate! It's a Draw!"), 100);
-    }
-    return true;
+    return draw('stalemate', 'Draw by stalemate');
 }

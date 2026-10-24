@@ -905,33 +905,83 @@ The most creative one, and the biggest scope of this list — pairs the Game Ana
 
 ---
 
+## ⚡ Session 20 — Performance, analysis-engine and visual rework
+
+**Engine (engine.js + ai.js), verified with perft + a 24-game match:**
+- engine.js: hoisted direction tables, cached king squares, pin-aware legality (the make/test/unmake check
+  is skipped for moves that can't expose the king), numeric piece codes (`piece.code`, `piece.white`),
+  Zobrist position keys (`computeHash`/`getBoardKey`, `positionHistory` is now a Map), `getGameStatus()`
+  (returns `{ reason, result, message }`; replaces checkGameOver/showGameOverModal coupling),
+  `applyMoveWithPromotion()`. Removed `domId` from pieces.
+- ai.js: the search runs on its own 0x88 typed-array board (`loadSearchBoard()` syncs from gameState; the
+  search never mutates gameState), integer moves, preallocated move buffers, make/unmake stacks,
+  incremental Zobrist (same keys as engine.js), typed-array TT that persists across moves
+  (`clearSearchMemory()` on new game), ply-based mate scores (±(MATE − plies)), PVS, null move, LMR,
+  check extension, mate-distance pruning, SEE move ordering + SEE/delta-pruned quiescence, repetition
+  stack instead of Map lookups, proper root-side contempt. Eval terms unchanged plus doubled/isolated
+  pawns, phase-scaled passed pawns, pawn shield, insufficient-material clamp.
+- `searchRoot(color, opts)` is the one entry point (multiPV, includeMove, evalNoise, contempt, withLines →
+  SAN lines + PV). `findBestMove()` returns `{ move, promo }`.
+- Measured (Node, same positions): depth 6 suite 20.9 s → 0.59 s; ~70 → ~400 nodes/ms. New engine vs the
+  previous commit at 150 ms/move: +18 −5 =1 (≈ +210 Elo). Perft matches reference counts to depth 4–5 on
+  5 standard suites; new evaluator matched the old one exactly on ~4,800 random positions.
+- Live play runs in `ai-worker.js` (falls back to the main thread if Workers are blocked, e.g. file://).
+
+**Game Analysis Engine (analysis-worker.js, analysis.js, openings.js):**
+- Each position searched once (was twice) with multi-PV 2 and the played move scored inside the same
+  search → a best move always has exactly 0 loss. Results stream move by move.
+- New categories/rules: Great (only good move), Brilliant via SEE-measured sacrifice, Miss = failing to
+  punish the opponent's error, mating move = Best, Book from a ~130-line opening database (+ name).
+- lichess-style accuracy (volatility-weighted + harmonic mean), per-phase accuracy, best move + PV,
+  punish line, mate-aware evals (`formatEval` → "M3"), Quick/Standard/Deep modes, report cache.
+- "What if" moves are now judged (category badge) before the engine replies.
+
+**UI / visuals:** shared `theme.css` design system + `board-ui.js` BoardView (drag-and-drop, click-to-move,
+transform animations with piece diffing, arrows, badges, on-board promotion picker, flip, 4 board themes,
+toasts). game/analysis/puzzles/site pages rebuilt on it; responsive down to phone width. Review page:
+eval bar, interactive eval graph, move-quality table (click to jump), keyboard ←/→/Home/End/F.
+Asset URLs carry `?v=7` cache-busting — bump it in the HTML files, the two `new Worker(...)` calls and the
+workers' `importScripts` whenever JS/CSS changes ship.
+
+**Still open:** right-click arrows/annotations on the board; per-side difficulty in Engine vs Engine;
+analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it feels shallow).
+
+---
+
+## 🧪 Session 21 — Brilliant fix, test suite, Retry mistakes, board annotations
+
+- **Brilliant fix:** a sacrifice candidate (piece left en prise) is now confirmed by playing the engine's
+  best line 2 plies on (`confirmSacrifice` in analysis-worker.js): it only counts if the mover is still
+  ≥150cp down or the line mates. No Brilliant when already ≥97% winning unless the sac forces mate.
+  10.Nxb5 in the Opera Game (knight for two pawns) is no longer Brilliant; 13.Rxd7 and 16.Qb8+ are.
+  `ANALYSIS_VERSION` → 4 (old cached reports recompute).
+- **Tests (`tests/`, no dependencies):** `npm test` = `tests/perft.js` (both move generators + hash vs
+  reference counts) and `tests/analysis.js` (Opera Game / Fool's Mate classifications, move judging).
+  `npm run bench` (search speed, `--rev <git rev>` to compare) and `npm run match -- <rev> <games> <ms>`
+  (engine-vs-engine vs a commit; needs a commit with `searchRoot`, i.e. Session 20 or later).
+- **Retry mistakes (review page):** steps through "You"'s Mistake/Miss/Blunder moves (both sides if
+  neither is You). Engine's top move solves it; any other move is sent to the worker's new `judge`
+  request and accepted if rated Good or better. Hint / Solution / Skip / Exit.
+- **Board annotations:** right-drag = arrow, right-click = circle (Shift red, Alt blue, Shift+Alt
+  yellow); left-click or a new position clears them. Works on every board page.
+
+---
+
 ## Paste this into a new session to continue:
 
 ```
 I have a vanilla JS chess site:
-  main/site.html, site.css, site-script.js   (landing page)
-  main/game/game.html, game-script.js, game.css   (the live game)
-  main/game/engine.js   (game state, move gen, draw detection)
-  main/game/ai.js       (negamax + alpha-beta + TT + quiescence + iterative deepening + killers +
-                          history heuristic + opening book + difficulty-aware eval noise + bishop
-                          pair/rook-file/passed-pawn/endgame-king eval terms; iterativeDeepen() is the
-                          reusable {move, score} search shared with the analysis worker)
-  main/game/notation.js (SAN generation)
-  main/game/analysis.html, analysis-page.js   (Game Analysis Engine — dedicated review page: board,
-                          clickable move list with move-quality glyphs, eval graph, accuracy, on-board
-                          move-rating badges, and interactive "what if" branching with engine play-back)
-  main/game/analysis.js  (shared constants: ANALYSIS_THRESHOLDS, CATEGORY_COLORS, CATEGORY_SYMBOLS,
-                          buildEvalGraphSVG)
-  main/game/analysis-worker.js (Game Analysis Engine — bidirectional-search classification + "explore"
-                          full-strength search, both off-thread)
+  main/theme.css                            (shared design tokens + components for every page)
+  main/site.html, site.css, site-script.js  (landing page)
+  main/game/game.html, game-script.js, game.css   (live game; game.css also styles review/puzzles)
+  main/game/board-ui.js   (BoardView: rendering, drag/click input, arrows, badges, themes, toasts)
+  main/game/engine.js     (rules, move gen, Zobrist keys, getGameStatus)
+  main/game/ai.js         (0x88 search board + PVS search; searchRoot()/findBestMove())
+  main/game/ai-worker.js  (live-game engine worker)
+  main/game/notation.js   (SAN generation + resolveSAN/replaySANFromStart)
+  main/game/analysis.html, analysis-page.js   (Game Review page)
+  main/game/analysis.js, openings.js, analysis-worker.js   (Game Analysis Engine)
+  main/game/puzzles.html, puzzles-page.js, puzzle-bank.js  (Puzzle Trainer)
 
-Please read TODO.md in the project root. Everything through Session 9 (bug fixes, landing page redesign,
-AI Boost Plan, and the full Game Analysis Engine including "what if" branching and move-quality glyphs) is
-complete and verified.
-
-The "🆕 Next Roadmap" section at the end is a set of feature ideas I proposed myself (not yet requested in
-detail) — sound effects, PGN import/export, resign/draw/takeback, a chess clock, save/resume, and a
-stretch idea for a puzzle mode built from blunders. Start with item 1 (sound effects) unless told
-otherwise — it's the smallest, highest-polish win. Confirm scope with me before starting anything further
-down the list, since none of it has been discussed in detail yet, only proposed.
+Please read TODO.md in the project root — Session 20 at the end summarizes the current architecture.
 ```

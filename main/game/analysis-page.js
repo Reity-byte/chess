@@ -1,174 +1,1056 @@
-// ─── GAME REPORT PAGE ──────────────────────────────────────────────────────────
-// Drives analysis.html: reads the just-finished game from localStorage (handed
-// off by game-script.js's "View Game Report" button), runs it through
-// analysis-worker.js, then renders a chess.com-style review — a clickable move
-// list, an eval graph, accuracy percentages, and the move's rating shown right
-// on the board (a colored badge on the destination square + a caption line).
+// ─── GAME REVIEW PAGE ──────────────────────────────────────────────────────────
+// Drives analysis.html: loads the just-finished game (handed over through
+// localStorage by game.html) or a pasted PGN, streams it through
+// analysis-worker.js, and renders the review — classified move list, eval bar,
+// eval graph, accuracy, move-quality counts, best-move arrows and lines.
 //
-// It also supports "what if" exploration: from any ply, click a piece and a
-// destination square to play an alternative move. The engine replies at full
-// strength (regardless of the difficulty the original game was played at,
-// since here the question is "what does the engine actually think"), and play
-// continues indefinitely as a variation, shown as its own inserted line in the
-// move list (like lichess's analysis board). Clicking any real move in the main
-// list — or "Back to Game" — discards the variation and resumes the recorded
-// game at that point; the variation is never saved.
-const STORAGE_KEY = 'chessGameForAnalysis';
+// From any position you can also play your own moves ("what if"): each one is
+// judged like a game move, the engine answers at full strength, and the line
+// shows up inside the move list. Errors can be replayed as a puzzle.
+const HANDOFF_KEY = 'chessGameForAnalysis';
+const CACHE_KEY = 'chessAnalysisCache';
+const MODE_KEY = 'chessAnalysisMode';
+const PUZZLE_BANK_KEY = 'chessPuzzleBank';
+const PUZZLE_BANK_CAP = 300;
+const NOTABLE = new Set(['Brilliant', 'Great', 'Inaccuracy', 'Mistake', 'Miss', 'Blunder']);
 
-let report = null;
-let selectedPly = -1; // -1 = starting position, no moves played yet
+let game = null;        // { sanMoves, moves: [{ move, promo }], white, black, result }
+let entries = [];       // per-move analysis, filled in as the worker streams it
+let report = null;      // the finished report
+let startEval = null;
+let analyzing = false;
+let selectedPly = -1;   // -1 = starting position
+let analysisMode = 'standard';
 let worker = null;
+let board = null;
+let flipped = false;
 
-// ─── VARIATION ("what if") STATE ───────────────────────────────────────────────
-let inVariation = false;
-let variationBranchPly = -1; // main-line ply index the variation branched from
-let variation = [];          // [{ color, san, from:{x,y}, to:{x,y}, details, promo, evalAfter }]
-let variationPly = -1;       // index into `variation` currently displayed
-let selectedSquare = null;
-let currentValidMoves = [];
-let engineThinking = false;
+let variation = null;   // { branchPly, moves: [{ color, san, move, promo, verdict, evalWhite }], index }
+let engineBusy = false;
+let exploreId = 0;
+let puzzle = null;      // { ply, target, solved }
+let retry = null;       // { plies, index, status: 'solving'|'checking'|'solved'|'revealed', solved, pending }
+let judgeId = 0;
 
-// ─── PUZZLE MODE ("try this as a puzzle") ──────────────────────────────────────
-// Presents the position right after a Blunder/Miss (the punishing side's turn)
-// and asks the user to find the reply the worker already computed as that
-// blunder's `actual` when scoring it - see analysis-worker.js's `punishMove`.
-let puzzleActive = false;
-let puzzlePly = -1;
-let puzzleTarget = null; // { fromX, fromY, toX, toY, details }
-let puzzleSolved = false;
+const $ = (id) => document.getElementById(id);
 
+// ─── STARTUP ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    const newGameBtn = document.getElementById('newGameButton');
-    const homeBtn = document.getElementById('homeButton');
-    const backToGameBtn = document.getElementById('backToGameButton');
-    const board = document.getElementById('chessboard');
-    const tryPuzzleBtn = document.getElementById('tryPuzzleButton');
-    const exitPuzzleBtn = document.getElementById('exitPuzzleButton');
+    initBoardThemePicker();
+    board = new BoardView($('chessboard'), {
+        canSelect: (x, y) => canPlayOnBoard() && !!gameState[y][x] && gameState[y][x].color === currentTurn,
+        legalMoves: (x, y) => getvalidMoves(x, y),
+        onMove: onBoardMove,
+    });
+    board.render(gameState, { animate: false });
 
-    if (newGameBtn) newGameBtn.addEventListener('click', () => location.href = 'game.html');
-    if (homeBtn) homeBtn.addEventListener('click', () => location.href = '../site.html');
-    if (backToGameBtn) backToGameBtn.addEventListener('click', () => selectPly(variationBranchPly));
-    if (tryPuzzleBtn) tryPuzzleBtn.addEventListener('click', startPuzzle);
-    if (exitPuzzleBtn) exitPuzzleBtn.addEventListener('click', () => selectPly(puzzlePly));
+    $('navStart').addEventListener('click', () => goTo(-1));
+    $('navPrev').addEventListener('click', stepBack);
+    $('navNext').addEventListener('click', stepForward);
+    $('navEnd').addEventListener('click', () => goTo(game ? game.sanMoves.length - 1 : -1));
+    $('navFlip').addEventListener('click', flipBoard);
+    $('backToGameButton').addEventListener('click', () => selectPly(variation ? variation.branchPly : selectedPly));
+    $('exitPuzzleButton').addEventListener('click', () => selectPly(puzzle ? puzzle.ply : selectedPly));
+    $('tryPuzzleButton').addEventListener('click', startPuzzle);
+    $('retryButton').addEventListener('click', startRetry);
+    $('retryHintButton').addEventListener('click', retryHint);
+    $('retrySolutionButton').addEventListener('click', retryReveal);
+    $('retryNextButton').addEventListener('click', () => showRetryItem(retry.index + 1));
+    $('retryExitButton').addEventListener('click', () => exitRetry());
+    $('analyzePgnButton').addEventListener('click', importPGN);
 
-    board.addEventListener('click', (e) => {
-        const sq = e.target.closest('.square');
-        if (sq) onSquareClick(parseInt(sq.dataset.x), parseInt(sq.dataset.y));
+    document.addEventListener('keydown', (e) => {
+        if (e.target.closest('textarea, input')) return;
+        const keys = { ArrowLeft: stepBack, ArrowRight: stepForward, Home: () => goTo(-1),
+                       End: () => goTo(game ? game.sanMoves.length - 1 : -1), f: flipBoard, F: flipBoard };
+        if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
     });
 
-    drawEmptyBoard();
-
-    const importBox = document.getElementById('pgnImportBox');
-    const analyzePgnBtn = document.getElementById('analyzePgnButton');
-    if (analyzePgnBtn) {
-        analyzePgnBtn.addEventListener('click', () => {
-            const pgnText = document.getElementById('pgnInput').value;
-            const sanMoves = parsePGNMovetext(pgnText);
-            if (sanMoves.length === 0) { alert('No moves found in that PGN.'); return; }
-            if (importBox) importBox.classList.add('hidden');
-            startAnalysis(sanMoves);
+    try { analysisMode = localStorage.getItem(MODE_KEY) || 'standard'; } catch (e) { /* default */ }
+    if (!ANALYSIS_MODES[analysisMode]) analysisMode = 'standard';
+    document.querySelectorAll('#modeSelect button').forEach(b => {
+        b.addEventListener('click', () => {
+            if (b.dataset.mode === analysisMode) return;
+            analysisMode = b.dataset.mode;
+            try { localStorage.setItem(MODE_KEY, analysisMode); } catch (e) { /* ignore */ }
+            syncModeButtons();
+            if (game) startAnalysis();
         });
+    });
+    syncModeButtons();
+
+    let handoff = null;
+    try { handoff = JSON.parse(localStorage.getItem(HANDOFF_KEY)); } catch (e) { handoff = null; }
+    // Older versions stored a bare SAN array.
+    if (Array.isArray(handoff)) handoff = { sanMoves: handoff };
+    if (handoff && Array.isArray(handoff.sanMoves) && handoff.sanMoves.length) {
+        loadGame(handoff);
+    } else {
+        showEmptyState();
     }
+    window.addEventListener('resize', debounce(renderGraph, 120));
+});
 
-    let sanMoves = null;
-    try { sanMoves = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) { sanMoves = null; }
+function syncModeButtons() {
+    document.querySelectorAll('#modeSelect button').forEach(b => b.classList.toggle('selected', b.dataset.mode === analysisMode));
+}
 
-    if (!Array.isArray(sanMoves) || sanMoves.length === 0) {
-        document.getElementById('reportProgress').textContent = 'No recent game found — paste a PGN below, or play a game first.';
-        document.getElementById('moveCaption').textContent = '';
-        if (importBox) importBox.classList.remove('hidden');
+function showEmptyState() {
+    setCaption({ icon: '♟', title: 'No game to review yet', line: 'Play a game, or paste a PGN below.' });
+    $('progressText').textContent = 'No game loaded';
+    $('movesEmpty').classList.remove('hidden');
+    $('pgnInput').focus();
+    renderCounts();
+}
+
+// ─── LOADING A GAME ────────────────────────────────────────────────────────────
+function loadGame(data) {
+    resetGame();
+    const moves = [];
+    for (const san of data.sanMoves) {
+        const r = resolveSAN(currentTurn, san);
+        if (!r) break;
+        moves.push(r);
+        applyMoveWithPromotion(r.move, r.promo);
+    }
+    if (moves.length < data.sanMoves.length) {
+        showToast(`Stopped at move ${Math.floor(moves.length / 2) + 1}: "${data.sanMoves[moves.length]}" isn't legal here.`, 4000);
+    }
+    if (moves.length === 0) { showEmptyState(); return; }
+
+    game = {
+        sanMoves: data.sanMoves.slice(0, moves.length), moves,
+        white: data.white || 'White', black: data.black || 'Black', result: data.result || '*',
+    };
+    flipped = game.black === 'You';
+    board.setFlipped(flipped);
+    $('evalBar').classList.toggle('flipped', flipped);
+    $('movesEmpty').classList.add('hidden');
+    $('accWhiteName').textContent = game.white;
+    $('accBlackName').textContent = game.black;
+    updatePlayerStrips();
+    buildMoveList();
+    selectPly(-1);
+    startAnalysis();
+}
+
+function importPGN() {
+    const parsed = parsePGN($('pgnInput').value);
+    if (parsed.sanMoves.length === 0) { showToast('No moves found in that text.'); return; }
+    try { localStorage.setItem(HANDOFF_KEY, JSON.stringify(parsed)); } catch (e) { /* still analyze */ }
+    $('pgnInput').value = '';
+    loadGame(parsed);
+}
+
+// PGN (or bare movetext) -> { sanMoves, white, black, result }. Drops headers,
+// comments, NAGs, move numbers, nested variations and the result marker.
+function parsePGN(text) {
+    const headers = {};
+    text.replace(/\[(\w+)\s+"([^"]*)"\]/g, (_, k, v) => { headers[k] = v; return ''; });
+    let body = text.replace(/\[[^\]]*\]/g, ' ').replace(/\{[^}]*\}/g, ' ').replace(/;[^\n]*/g, ' ');
+    let prev;
+    do { prev = body; body = body.replace(/\([^()]*\)/g, ' '); } while (body !== prev);
+    body = body.replace(/\$\d+/g, ' ').replace(/\d+\.(\.\.)?/g, ' ');
+    const sanMoves = body.split(/\s+/).filter(t => t && !/^(1-0|0-1|1\/2-1\/2|\*)$/.test(t));
+    return { sanMoves, white: headers.White, black: headers.Black, result: headers.Result };
+}
+
+// ─── RUNNING THE ANALYSIS ──────────────────────────────────────────────────────
+function cacheKey() {
+    return `${ANALYSIS_VERSION}|${analysisMode}|${game.sanMoves.join(' ')}`;
+}
+
+function startAnalysis() {
+    if (worker) { worker.terminate(); worker = null; }
+    entries = [];
+    report = null;
+    startEval = null;
+    engineBusy = false;
+    clearVariation();
+    clearPuzzle();
+    refreshAllMoveCells();
+
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) { cached = null; }
+    if (cached && cached.key === cacheKey() && cached.report) {
+        finishAnalysis(cached.report, true);
         return;
     }
 
-    startAnalysis(sanMoves);
-});
-
-// Parses PGN movetext into a plain SAN array: strips header lines ("[Event ..]"),
-// `{comments}`, `$NAGs`, move numbers ("12." / "12..."), and the trailing result
-// marker (1-0 / 0-1 / 1/2-1/2 / *). Doesn't handle nested variations "(...)" -
-// out of scope for a "paste a mainline game" import box.
-function parsePGNMovetext(pgnText) {
-    let text = pgnText
-        .replace(/\[[^\]]*\]/g, ' ')
-        .replace(/\{[^}]*\}/g, ' ')
-        .replace(/\$\d+/g, ' ')
-        .replace(/\d+\.(\.\.)?/g, ' ')
-        .replace(/1-0|0-1|1\/2-1\/2|\*/g, ' ');
-    return text.split(/\s+/).map(s => s.trim()).filter(Boolean);
+    analyzing = true;
+    setProgress(0, game.sanMoves.length);
+    renderSummary();
+    renderGraph();
+    if (!createWorker()) {
+        $('progressText').textContent = 'Analysis needs the site served over http(s) (Web Workers are blocked here).';
+        analyzing = false;
+        return;
+    }
+    worker.postMessage({ type: 'analyze', sanMoves: game.sanMoves, mode: analysisMode });
 }
 
-// Feeds `sanMoves` into the analysis worker, whether it came from the just-
-// finished live game (localStorage) or a pasted PGN. Shared so both entry
-// points get identical progress/render/error handling.
-function startAnalysis(sanMoves) {
-    const progressEl = document.getElementById('reportProgress');
-    progressEl.textContent = `Analyzing move 0 / ${sanMoves.length}...`;
-
-    worker = new Worker('analysis-worker.js');
+function createWorker() {
+    try { worker = new Worker('analysis-worker.js?v=7'); } catch (e) { worker = null; return false; }
     worker.onmessage = (e) => {
-        const data = e.data;
-        if (data.type === 'progress') {
-            progressEl.textContent = `Analyzing move ${data.ply} / ${data.total}...`;
-        } else if (data.type === 'done') {
-            progressEl.textContent = '';
-            report = data.report;
-            renderMoveList();
+        const d = e.data;
+        if (d.type === 'start') {
+            renderOpening(d.opening);
+        } else if (d.type === 'move') {
+            startEval = d.startEval;
+            entries[d.entry.ply] = d.entry;
+            updateMoveCell(d.entry.ply);
+            setProgress(d.entry.ply + 1, game.sanMoves.length, d.entry.depth);
             renderGraph();
-            renderAccuracy();
-            growPuzzleBank(sanMoves, report.perMove);
-            selectPly(report.perMove.length - 1); // default: final position of the game
-        } else if (data.type === 'error') {
-            progressEl.textContent = 'Analysis failed: ' + data.message;
-        } else if (data.type === 'exploreReply') {
-            onEngineReply(data.result);
+            renderCounts();
+            if (d.entry.ply === selectedPly || (selectedPly === -1 && d.entry.ply === 0)) refreshSelection();
+        } else if (d.type === 'done') {
+            finishAnalysis(d.report, false);
+        } else if (d.type === 'exploreReply') {
+            if (d.requestId === exploreId) onEngineReply(d.result);
+        } else if (d.type === 'judgeReply') {
+            if (retry && d.requestId === judgeId) onRetryVerdict(d.result);
+        } else if (d.type === 'error') {
+            if (d.requestType === 'explore' || d.requestType === 'judge') {
+                engineBusy = false;
+                if (retry && retry.status === 'checking') retry.status = 'solving';
+                showToast('Engine error: ' + d.message);
+                return;
+            }
+            analyzing = false;
+            $('progressText').textContent = 'Analysis failed: ' + d.message;
         }
     };
     worker.onerror = (err) => {
-        progressEl.textContent = 'Analysis failed: ' + err.message;
+        analyzing = false;
+        engineBusy = false;
+        $('progressText').textContent = 'Analysis failed: ' + (err.message || 'worker error');
     };
-    worker.postMessage({ type: 'analyze', sanMoves });
+    return true;
 }
 
-// ─── PUZZLE BANK GROWTH ─────────────────────────────────────────────────────────
-// Every analyzed game (live or pasted) contributes its Blunder/Miss positions to
-// the same growing pool puzzles.html's Puzzle Trainer draws from, in addition to
-// the starter set shipped in puzzle-bank.js. Deduplicates by exact move prefix
-// so re-analyzing the same game twice doesn't create duplicate puzzles, and caps
-// total size so the bank can't grow unbounded in localStorage.
-const PUZZLE_BANK_KEY = 'chessPuzzleBank';
-const PUZZLE_BANK_CAP = 300;
+function finishAnalysis(finished, fromCache) {
+    report = finished;
+    entries = finished.perMove.slice();
+    startEval = finished.startEval;
+    analyzing = false;
+    refreshAllMoveCells();
+    renderOpening(finished.opening);
+    renderSummary();
+    renderGraph();
+    renderCounts();
+    $('progressBox').classList.add('hidden');
+    refreshSelection();
+    updateRetryButton();
+    if (!fromCache) {
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ key: cacheKey(), report: finished })); } catch (e) { /* cache is optional */ }
+        growPuzzleBank(game.sanMoves, finished.perMove);
+    }
+    if (!worker) createWorker(); // reports from cache still need a worker for "what if" exploration
+    updatePlayerStrips();
+}
 
-// Same heuristic used to rate puzzle-bank.js's starter set: a punish that lands
-// on the exact square the blunder's piece just moved to is a simple, "obvious"
-// recapture (lower rating); anything else is scored higher, both nudged further
-// by how large the centipawn swing was. Not calibrated against real solve-rate
-// data - there isn't any for this project - just a rough difficulty proxy.
+function setProgress(done, total, depth) {
+    $('progressBox').classList.remove('hidden');
+    $('progressFill').style.width = `${total ? (done / total) * 100 : 0}%`;
+    $('progressText').textContent = done < total ? `Analyzing move ${Math.floor(done / 2) + 1} of ${Math.ceil(total / 2)}…` : 'Finishing…';
+    $('progressDepth').textContent = depth ? `depth ${depth}` : ANALYSIS_MODES[analysisMode].label;
+}
+
+// ─── NAVIGATION ────────────────────────────────────────────────────────────────
+function goTo(ply) { if (game) selectPly(ply); }
+
+function stepBack() {
+    if (!game) return;
+    if (variation) {
+        if (variation.index > 0) selectVariationMove(variation.index - 1);
+        else selectPly(variation.branchPly);
+        return;
+    }
+    if (puzzle) { selectPly(puzzle.ply); return; }
+    if (retry) return;
+    selectPly(Math.max(-1, selectedPly - 1));
+}
+
+function stepForward() {
+    if (!game) return;
+    if (variation) {
+        if (variation.index < variation.moves.length - 1) selectVariationMove(variation.index + 1);
+        return;
+    }
+    if (retry) return;
+    selectPly(Math.min(game.sanMoves.length - 1, selectedPly + 1));
+}
+
+function flipBoard() {
+    flipped = !flipped;
+    board.setFlipped(flipped);
+    $('evalBar').classList.toggle('flipped', flipped);
+    updatePlayerStrips();
+    refreshEvalBar();
+}
+
+function positionAt(ply) {
+    resetGame();
+    for (let i = 0; i <= ply; i++) applyMoveWithPromotion(game.moves[i].move, game.moves[i].promo);
+}
+
+// Shows a real game position; leaves any variation or puzzle.
+function selectPly(ply) {
+    if (!game) return;
+    clearVariation();
+    clearPuzzle();
+    clearRetry();
+    selectedPly = Math.max(-1, Math.min(ply, game.sanMoves.length - 1));
+    positionAt(selectedPly);
+    board.clearSelection();
+    board.render(gameState);
+    refreshSelection();
+}
+
+// Redraws everything that depends on the selected ply (marks, arrows, caption…).
+function refreshSelection() {
+    if (!game || variation || puzzle || retry) return;
+    const ply = selectedPly;
+    const entry = ply >= 0 ? entries[ply] : null;
+    const played = ply >= 0 ? game.moves[ply].move : null;
+
+    board.setLastMove(played ? { x: played.fromX, y: played.fromY } : null, played ? { x: played.toX, y: played.toY } : null);
+    board.updateCheckFromGame();
+    board.setBadge(entry ? {
+        x: played.toX, y: played.toY, glyph: CATEGORY_SYMBOLS[entry.category],
+        color: CATEGORY_COLORS[entry.category], title: entry.category,
+    } : null);
+
+    // Green arrow: what the engine would have played instead.
+    const best = entry && entry.bestMove && !['Book', 'Forced'].includes(entry.category) ? entry.bestMove : null;
+    board.setArrows(best ? [{ from: { x: best.fromX, y: best.fromY }, to: { x: best.toX, y: best.toY }, color: 'rgba(129, 199, 84, 0.85)' }] : []);
+
+    renderCaption(ply, entry);
+    refreshEvalBar();
+    highlightMoveCell();
+    renderGraphCursor();
+    $('navPrev').disabled = ply < 0;
+    $('navStart').disabled = ply < 0;
+    $('navNext').disabled = ply >= game.sanMoves.length - 1;
+    $('navEnd').disabled = ply >= game.sanMoves.length - 1;
+}
+
+function evalAtPly(ply) {
+    if (ply < 0) return startEval;
+    return entries[ply] ? entries[ply].evalAfter : null;
+}
+
+function refreshEvalBar(value) {
+    const v = value !== undefined ? value : (variation ? currentVariationEval() : evalAtPly(selectedPly));
+    const fill = $('evalFill'), label = $('evalLabel');
+    if (v === null || v === undefined) {
+        fill.style.height = '50%';
+        label.textContent = '';
+        return;
+    }
+    fill.style.height = `${(evalToBarFraction(v) * 100).toFixed(1)}%`;
+    const whiteAhead = v >= 0;
+    label.textContent = formatEval(v).replace(/^[+-]/, '');
+    // The label sits on the advantaged side's end of the bar.
+    const atBottom = whiteAhead !== flipped;
+    label.className = 'eval-label ' + (atBottom ? 'bottom' : 'top');
+    label.style.color = whiteAhead ? '#1b1d21' : '#eef0f2';
+}
+
+// ─── CAPTION ───────────────────────────────────────────────────────────────────
+function moveNumberPrefix(ply) {
+    return `${Math.floor(ply / 2) + 1}${ply % 2 === 0 ? '.' : '...'}`;
+}
+
+// SAN list starting at `startPly` -> "12. Nf3 Nc6 13. d4" (or "12... Nc6 13. d4").
+function formatLine(sans, startPly, max = 8) {
+    const parts = [];
+    sans.slice(0, max).forEach((san, i) => {
+        const ply = startPly + i;
+        if (ply % 2 === 0) parts.push(`${Math.floor(ply / 2) + 1}. ${san}`);
+        else parts.push(i === 0 ? `${Math.floor(ply / 2) + 1}... ${san}` : san);
+    });
+    return parts.join(' ') + (sans.length > max ? ' …' : '');
+}
+
+function setCaption({ icon, color, title, evalText, line, line2 }) {
+    $('captionIcon').textContent = icon || '';
+    $('captionIcon').style.background = color || '';
+    const t = $('captionTitle');
+    t.textContent = title || '';
+    if (evalText) {
+        const pill = document.createElement('span');
+        pill.className = 'eval-pill' + (evalText.startsWith('+') || evalText === '1-0' || /^M\d/.test(evalText) ? ' white-adv' : '');
+        pill.textContent = evalText;
+        t.appendChild(pill);
+    }
+    $('captionLine').innerHTML = line || '';
+    $('captionLine2').innerHTML = line2 || '';
+}
+
+function escapeHTML(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function renderCaption(ply, entry) {
+    const puzzleBtn = $('tryPuzzleButton');
+    puzzleBtn.classList.add('hidden');
+    if (ply < 0) {
+        setCaption({
+            icon: '♟', title: 'Starting position',
+            evalText: startEval !== null ? formatEval(startEval) : '',
+            line: report && report.opening ? `Opening: <strong>${escapeHTML(report.opening)}</strong>` : 'Use → or the move list to step through the game.',
+        });
+        return;
+    }
+    const san = game.sanMoves[ply];
+    if (!entry) {
+        setCaption({ icon: '…', title: `${moveNumberPrefix(ply)} ${san}`, line: analyzing ? 'Analyzing this move…' : 'Not analyzed.' });
+        return;
+    }
+    const cat = entry.category;
+    let line = '', line2 = '';
+    if (cat === 'Book') line = report && report.opening ? `Opening theory — ${escapeHTML(report.opening)}` : 'A known opening move.';
+    else if (cat === 'Forced') line = 'The only legal move.';
+    else if (cat === 'Brilliant') line = `Gives up ${materialWord(entry.sacrifice)} — and the engine approves.`;
+    else if (cat === 'Great') line = 'The only move that keeps the position together.';
+
+    if (entry.bestMove) {
+        line = `Best was <strong>${escapeHTML(entry.bestMove.san)}</strong> <span class="eval-pill">${formatEval(entry.evalBefore)}</span>`
+            + (cat === 'Miss' ? ' — an opportunity left on the table.' : '');
+        if (entry.bestLine && entry.bestLine.length > 1) line2 = `<span class="san-line">${escapeHTML(formatLine(entry.bestLine, ply))}</span>`;
+    } else if (entry.punishLine && entry.punishLine.length && !['Book', 'Forced'].includes(cat)) {
+        line2 = `Continuation: <span class="san-line">${escapeHTML(formatLine(entry.punishLine, ply + 1, 6))}</span>`;
+    }
+    if (!line && cat !== 'Book') line = 'Matches the engine.';
+
+    setCaption({
+        icon: CATEGORY_SYMBOLS[cat], color: CATEGORY_COLORS[cat],
+        title: `${moveNumberPrefix(ply)} ${san} is ${CATEGORY_DESCRIPTIONS[cat]}`,
+        evalText: formatEval(entry.evalAfter), line, line2,
+    });
+    if (['Mistake', 'Miss', 'Blunder'].includes(cat) && entry.punishMove && !analyzing) puzzleBtn.classList.remove('hidden');
+}
+
+function materialWord(cp) {
+    if (cp >= 800) return 'the queen';
+    if (cp >= 450) return 'a rook';
+    if (cp >= 250) return 'a piece';
+    return 'material';
+}
+
+// ─── MOVE LIST ─────────────────────────────────────────────────────────────────
+function buildMoveList() {
+    const grid = $('movesGrid');
+    grid.innerHTML = '';
+    for (let i = 0; i < game.sanMoves.length; i += 2) {
+        const num = document.createElement('div');
+        num.className = 'mv-num';
+        num.textContent = `${i / 2 + 1}.`;
+        grid.appendChild(num);
+        for (const ply of [i, i + 1]) {
+            const cell = document.createElement('div');
+            cell.className = 'mv';
+            if (ply < game.sanMoves.length) {
+                cell.dataset.ply = ply;
+                cell.classList.add('clickable');
+                cell.addEventListener('click', () => selectPly(ply));
+            }
+            grid.appendChild(cell);
+        }
+    }
+    refreshAllMoveCells();
+}
+
+function refreshAllMoveCells() {
+    if (!game) return;
+    for (let i = 0; i < game.sanMoves.length; i++) updateMoveCell(i);
+}
+
+function updateMoveCell(ply) {
+    const cell = document.querySelector(`#movesGrid .mv[data-ply="${ply}"]`);
+    if (!cell) return;
+    const entry = entries[ply];
+    cell.innerHTML = '';
+    if (entry) {
+        const icon = document.createElement('span');
+        icon.className = 'mv-icon';
+        icon.style.background = CATEGORY_COLORS[entry.category];
+        icon.textContent = CATEGORY_SYMBOLS[entry.category];
+        cell.appendChild(icon);
+        cell.title = `${entry.category} · ${formatEval(entry.evalAfter)}`;
+    }
+    cell.appendChild(document.createTextNode(game.sanMoves[ply]));
+    cell.style.opacity = entry || !analyzing ? '' : '0.55';
+}
+
+function highlightMoveCell() {
+    document.querySelectorAll('#movesGrid .mv.active').forEach(c => c.classList.remove('active'));
+    const cell = document.querySelector(`#movesGrid .mv[data-ply="${selectedPly}"]`);
+    if (cell && !variation) {
+        cell.classList.add('active');
+        const scroller = $('movesScroll');
+        const top = cell.offsetTop - scroller.offsetTop;
+        if (top < scroller.scrollTop || top > scroller.scrollTop + scroller.clientHeight - 40) {
+            scroller.scrollTop = top - scroller.clientHeight / 2;
+        }
+    }
+}
+
+// ─── SUMMARY: ACCURACY, OPENING, COUNTS, PHASES ────────────────────────────────
+function renderOpening(name) {
+    $('openingLine').innerHTML = name ? `Opening: <strong>${escapeHTML(name)}</strong>` : '';
+}
+
+function updatePlayerStrips() {
+    const topColor = flipped ? 'white' : 'black';
+    const bottomColor = flipped ? 'black' : 'white';
+    const name = (c) => game ? (c === 'white' ? game.white : game.black) : (c === 'white' ? 'White' : 'Black');
+    $('topName').textContent = name(topColor);
+    $('bottomName').textContent = name(bottomColor);
+    $('topAvatar').className = `piece-icon ${topColor} king`;
+    $('bottomAvatar').className = `piece-icon ${bottomColor} king`;
+    const acc = report ? report.accuracy : null;
+    for (const [id, color] of [['topAcc', topColor], ['bottomAcc', bottomColor]]) {
+        const v = acc ? acc[color] : null;
+        $(id).hidden = v === null || v === undefined;
+        if (v !== null && v !== undefined) $(id).textContent = `${v.toFixed(1)}% accuracy`;
+    }
+}
+
+function renderSummary() {
+    const acc = report ? report.accuracy : null;
+    $('accWhite').textContent = acc && acc.white !== null ? acc.white.toFixed(1) : '–';
+    $('accBlack').textContent = acc && acc.black !== null ? acc.black.toFixed(1) : '–';
+    updatePlayerStrips();
+    for (const color of ['white', 'black']) {
+        const row = $(color === 'white' ? 'phaseWhite' : 'phaseBlack');
+        const ph = report && report.phaseAccuracy ? report.phaseAccuracy[color] : {};
+        const cells = row.querySelectorAll('span');
+        ['opening', 'middlegame', 'endgame'].forEach((p, i) => {
+            const v = ph[p];
+            cells[i + 1].className = 'phase-chip';
+            cells[i + 1].textContent = v === null || v === undefined ? '–' : v;
+            cells[i + 1].style.color = v === null || v === undefined ? '' : v >= 90 ? 'var(--accent)' : v >= 75 ? '' : v >= 60 ? 'var(--warning)' : 'var(--danger)';
+        });
+    }
+}
+
+function renderCounts() {
+    const table = $('countsTable');
+    table.innerHTML = '';
+    const counts = { white: {}, black: {} };
+    entries.forEach(e => { if (e) counts[e.color][e.category] = (counts[e.color][e.category] || 0) + 1; });
+    for (const cat of CATEGORY_ORDER) {
+        const tr = document.createElement('tr');
+        const label = document.createElement('td');
+        label.innerHTML = `<span class="cat"><span class="mv-icon" style="background:${CATEGORY_COLORS[cat]}">${CATEGORY_SYMBOLS[cat]}</span>${cat}</span>`;
+        tr.appendChild(label);
+        for (const color of ['white', 'black']) {
+            const td = document.createElement('td');
+            const n = counts[color][cat] || 0;
+            td.className = 'n' + (n ? ' clickable' : ' zero');
+            td.textContent = n;
+            td.style.color = n ? CATEGORY_COLORS[cat] : '';
+            if (n) {
+                td.title = `Jump to ${color}'s next ${cat.toLowerCase()} move`;
+                td.addEventListener('click', () => jumpToCategory(color, cat));
+            }
+            tr.appendChild(td);
+        }
+        table.appendChild(tr);
+    }
+}
+
+// Cycles through `color`'s moves of category `cat`, starting after the selection.
+function jumpToCategory(color, cat) {
+    const plies = entries.filter(e => e && e.color === color && e.category === cat).map(e => e.ply);
+    if (!plies.length) return;
+    const next = plies.find(p => p > selectedPly);
+    selectPly(next !== undefined ? next : plies[0]);
+}
+
+// ─── EVAL GRAPH ────────────────────────────────────────────────────────────────
+const GRAPH_H = 110;
+
+function graphPoints() {
+    const pts = [];
+    if (startEval === null) return pts;
+    pts.push({ k: 0, v: startEval });
+    for (let i = 0; i < game.sanMoves.length; i++) {
+        if (!entries[i]) break;
+        pts.push({ k: i + 1, v: entries[i].evalAfter, entry: entries[i] });
+    }
+    return pts;
+}
+
+function renderGraph() {
+    const svg = $('evalGraph');
+    if (!svg) return;
+    const W = Math.max(200, svg.clientWidth || 340), H = GRAPH_H;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = '';
+    const NS = 'http://www.w3.org/2000/svg';
+    const add = (tag, attrs) => { const el = document.createElementNS(NS, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); svg.appendChild(el); return el; };
+    const n = game ? Math.max(1, game.sanMoves.length) : 1;
+    const x = (k) => (k / n) * W;
+    const y = (v) => H - evalToBarFraction(v) * (H - 4) - 2;
+
+    const pts = game ? graphPoints() : [];
+    if (pts.length) {
+        let d = `M0,${H} `;
+        pts.forEach(p => { d += `L${x(p.k).toFixed(1)},${y(p.v).toFixed(1)} `; });
+        d += `L${x(pts[pts.length - 1].k).toFixed(1)},${H} Z`;
+        add('path', { d, class: 'area' });
+    }
+    add('line', { x1: 0, y1: H / 2, x2: W, y2: H / 2, class: 'mid' });
+    for (const p of pts) {
+        if (!p.entry || !NOTABLE.has(p.entry.category)) continue;
+        add('circle', { cx: x(p.k), cy: y(p.v), r: 3.6, fill: CATEGORY_COLORS[p.entry.category], class: 'dot' });
+    }
+    const cursor = add('line', { x1: 0, y1: 0, x2: 0, y2: H, class: 'cursor', id: 'graphCursor' });
+    cursor.style.display = 'none';
+    renderGraphCursor();
+
+    svg.onmousemove = (e) => {
+        if (!game) return;
+        const r = svg.getBoundingClientRect();
+        const k = Math.max(0, Math.min(n, Math.round(((e.clientX - r.left) / r.width) * n)));
+        const tip = $('graphTip');
+        const v = k === 0 ? startEval : (entries[k - 1] ? entries[k - 1].evalAfter : null);
+        if (v === null || v === undefined) { tip.classList.add('hidden'); return; }
+        tip.textContent = k === 0 ? `Start ${formatEval(v)}` : `${moveNumberPrefix(k - 1)} ${game.sanMoves[k - 1]}  ${formatEval(v)}`;
+        tip.style.left = `${12 + (k / n) * r.width}px`;
+        tip.classList.remove('hidden');
+    };
+    svg.onmouseleave = () => $('graphTip').classList.add('hidden');
+    svg.onclick = (e) => {
+        if (!game) return;
+        const r = svg.getBoundingClientRect();
+        const k = Math.round(((e.clientX - r.left) / r.width) * n);
+        selectPly(Math.max(-1, Math.min(game.sanMoves.length - 1, k - 1)));
+    };
+}
+
+function renderGraphCursor() {
+    const c = $('graphCursor'), svg = $('evalGraph');
+    if (!c || !game) return;
+    const W = Math.max(200, svg.clientWidth || 340);
+    const k = selectedPly + 1;
+    const xPos = (k / Math.max(1, game.sanMoves.length)) * W;
+    c.setAttribute('x1', xPos); c.setAttribute('x2', xPos);
+    c.style.display = '';
+}
+
+// ─── "WHAT IF" EXPLORATION ─────────────────────────────────────────────────────
+function canPlayOnBoard() {
+    if (!game || !report || analyzing || engineBusy || !worker) return false;
+    if (retry) return retry.status === 'solving';
+    return !(puzzle && puzzle.solved);
+}
+
+function onBoardMove(move) {
+    if (retry) { retryGuess(move); return; }
+    if (puzzle) { checkPuzzleGuess(move); return; }
+    playVariationMove(move);
+}
+
+async function playVariationMove(move) {
+    const piece = gameState[move.fromY][move.fromX];
+    let promo = null;
+    if (piece.type === 'pawn' && (move.toY === 0 || move.toY === 7)) {
+        promo = await board.askPromotion(move.toX, move.toY, piece.color);
+        if (!promo) return;
+    }
+    if (!variation) {
+        variation = { branchPly: selectedPly, moves: [], index: -1 };
+        $('variationBanner').classList.remove('hidden');
+    } else if (variation.index < variation.moves.length - 1) {
+        variation.moves = variation.moves.slice(0, variation.index + 1); // playing from earlier in the line replaces its tail
+    }
+    const color = currentTurn;
+    const san = moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, promo);
+    applyMoveWithPromotion(move, promo);
+    const fullSan = san + getCheckSuffix(currentTurn);
+    variation.moves.push({ color, san: fullSan, move, promo, verdict: null, evalWhite: null });
+    variation.index = variation.moves.length - 1;
+
+    board.render(gameState);
+    board.setLastMove({ x: move.fromX, y: move.fromY }, { x: move.toX, y: move.toY });
+    board.updateCheckFromGame();
+    board.setArrows([]);
+    board.setBadge(null);
+    renderVariationLine();
+    setCaption({ icon: '…', title: `${fullSan} — engine is thinking…` });
+    requestEngineReply();
+}
+
+function requestEngineReply() {
+    engineBusy = true;
+    exploreId++;
+    worker.postMessage({
+        type: 'explore', requestId: exploreId,
+        sanMoves: game.sanMoves.slice(0, variation.branchPly + 1),
+        variationMoves: variation.moves.map(v => ({ ...v.move, promo: v.promo })),
+    });
+}
+
+function onEngineReply(result) {
+    engineBusy = false;
+    if (!variation) return;
+    const userEntry = variation.moves[variation.moves.length - 1];
+    userEntry.verdict = result.userVerdict;
+    userEntry.evalWhite = result.evalWhite;
+
+    if (!result.move) {
+        renderVariationLine();
+        showVariationCaption(variation.moves.length - 1, 'No legal reply — the line ends here.');
+        return;
+    }
+    const color = currentTurn;
+    applyMoveWithPromotion(result.move, result.move.promo);
+    variation.moves.push({ color, san: result.san, move: result.move, promo: result.move.promo, verdict: null, evalWhite: result.evalWhite, pv: result.pv });
+    variation.index = variation.moves.length - 1;
+    board.render(gameState);
+    board.setLastMove({ x: result.move.fromX, y: result.move.fromY }, { x: result.move.toX, y: result.move.toY });
+    board.updateCheckFromGame();
+    renderVariationLine();
+    showVariationCaption(variation.index);
+}
+
+function currentVariationEval() {
+    if (!variation) return null;
+    for (let i = variation.index; i >= 0; i--) if (variation.moves[i].evalWhite !== null) return variation.moves[i].evalWhite;
+    return evalAtPly(variation.branchPly);
+}
+
+function showVariationCaption(i, note) {
+    const vm = variation.moves[i];
+    const ply = variation.branchPly + 1 + i;
+    const isUser = i % 2 === 0;
+    const verdict = isUser ? vm.verdict : null;
+    let title, icon = '↳', color = '';
+    if (verdict) {
+        title = `${moveNumberPrefix(ply)} ${vm.san} would be ${CATEGORY_DESCRIPTIONS[verdict.category]}`;
+        icon = CATEGORY_SYMBOLS[verdict.category];
+        color = CATEGORY_COLORS[verdict.category];
+    } else {
+        title = `${moveNumberPrefix(ply)} ${vm.san}${isUser ? '' : ' — engine reply'}`;
+    }
+    const line = verdict && verdict.bestSan ? `Engine prefers <strong>${escapeHTML(verdict.bestSan)}</strong>.` : (note || '');
+    const pv = !isUser && vm.pv && vm.pv.length > 1 ? `Engine line: <span class="san-line">${escapeHTML(formatLine(vm.pv, ply, 8))}</span>` : '';
+    setCaption({ icon, color, title, evalText: vm.evalWhite !== null ? formatEval(vm.evalWhite) : '', line, line2: pv });
+    refreshEvalBar();
+}
+
+function selectVariationMove(i) {
+    if (!variation || engineBusy) return;
+    variation.index = i;
+    positionAt(variation.branchPly);
+    for (let k = 0; k <= i; k++) applyMoveWithPromotion(variation.moves[k].move, variation.moves[k].promo);
+    const vm = variation.moves[i];
+    board.render(gameState);
+    board.setLastMove({ x: vm.move.fromX, y: vm.move.fromY }, { x: vm.move.toX, y: vm.move.toY });
+    board.updateCheckFromGame();
+    renderVariationLine();
+    showVariationCaption(i);
+}
+
+function renderVariationLine() {
+    const old = $('variationRow');
+    if (old) old.remove();
+    if (!variation || variation.moves.length === 0) return;
+    const line = document.createElement('div');
+    line.id = 'variationRow';
+    line.className = 'variation-line';
+    variation.moves.forEach((vm, i) => {
+        const ply = variation.branchPly + 1 + i;
+        const span = document.createElement('span');
+        span.className = 'variation-move' + (i === variation.index ? ' active' : '');
+        const prefix = ply % 2 === 0 ? `${Math.floor(ply / 2) + 1}. ` : (i === 0 ? `${Math.floor(ply / 2) + 1}... ` : '');
+        span.textContent = prefix + vm.san;
+        if (vm.verdict) {
+            const icon = document.createElement('span');
+            icon.className = 'mv-icon';
+            icon.style.cssText = `display:inline-grid; margin-left:4px; vertical-align:-3px; background:${CATEGORY_COLORS[vm.verdict.category]}`;
+            icon.textContent = CATEGORY_SYMBOLS[vm.verdict.category];
+            span.appendChild(icon);
+        }
+        span.addEventListener('click', () => selectVariationMove(i));
+        line.appendChild(span);
+        line.appendChild(document.createTextNode(' '));
+    });
+    const grid = $('movesGrid');
+    const row = Math.floor(variation.branchPly / 2);
+    if (variation.branchPly < 0) grid.prepend(line);
+    else grid.children[row * 3 + 2].after(line);
+    highlightMoveCell();
+    line.scrollIntoView({ block: 'nearest' });
+}
+
+function clearVariation() {
+    if (!variation) return;
+    variation = null;
+    engineBusy = false;
+    exploreId++;
+    $('variationBanner').classList.add('hidden');
+    const old = $('variationRow');
+    if (old) old.remove();
+}
+
+// ─── PUZZLE MODE ───────────────────────────────────────────────────────────────
+function startPuzzle() {
+    const entry = entries[selectedPly];
+    if (!entry || !entry.punishMove) return;
+    const ply = selectedPly;
+    clearVariation();
+    puzzle = { ply, target: entry.punishMove, solved: false };
+    positionAt(ply);
+    board.render(gameState);
+    board.setArrows([]);
+    board.setBadge(null);
+    board.setLastMove({ x: entry.from.x, y: entry.from.y }, { x: entry.to.x, y: entry.to.y });
+    $('puzzleBanner').classList.remove('hidden');
+    const side = currentTurn === 'white' ? 'White' : 'Black';
+    $('puzzleBannerText').textContent = `${side} to move — punish ${entry.san}!`;
+    setCaption({ icon: '🧩', title: `Find ${side}'s best move`, line: `${moveNumberPrefix(ply)} ${escapeHTML(entry.san)} was ${CATEGORY_DESCRIPTIONS[entry.category]}. How do you exploit it?` });
+    $('tryPuzzleButton').classList.add('hidden');
+}
+
+function checkPuzzleGuess(move) {
+    const t = puzzle.target;
+    if (move.fromX !== t.fromX || move.fromY !== t.fromY || move.toX !== t.toX || move.toY !== t.toY) {
+        setCaption({ icon: '✗', color: CATEGORY_COLORS.Blunder, title: 'Not quite — try again', line: 'Look for checks, captures and threats.' });
+        return;
+    }
+    puzzle.solved = true;
+    applyMoveWithPromotion(move, t.promo || (gameState[move.fromY][move.fromX].type === 'pawn' && (move.toY === 0 || move.toY === 7) ? 'queen' : null));
+    board.render(gameState);
+    board.setLastMove({ x: move.fromX, y: move.fromY }, { x: move.toX, y: move.toY });
+    board.updateCheckFromGame();
+    const entry = entries[puzzle.ply];
+    const line = entry.punishLine && entry.punishLine.length > 1
+        ? `Line: <span class="san-line">${escapeHTML(formatLine(entry.punishLine, puzzle.ply + 1))}</span>` : '';
+    setCaption({ icon: '✓', color: CATEGORY_COLORS.Best, title: `Correct! ${t.san || ''} punishes it.`, line });
+    $('puzzleBannerText').textContent = 'Solved! Press Exit to continue the review.';
+}
+
+function clearPuzzle() {
+    if (!puzzle) return;
+    puzzle = null;
+    $('puzzleBanner').classList.add('hidden');
+}
+
+// ─── RETRY MISTAKES ────────────────────────────────────────────────────────────
+// Walks through the reviewed player's errors (both sides when neither is "You"),
+// each from the position before the mistake. The engine's top move solves it,
+// and so does any other move the engine rates Good or better.
+const RETRY_CATEGORIES = new Set(['Mistake', 'Miss', 'Blunder']);
+const RETRY_ACCEPTED = new Set(['Brilliant', 'Great', 'Best', 'Excellent', 'Good']);
+
+function retryPlies() {
+    if (!report) return [];
+    const sides = game.white === 'You' ? ['white'] : game.black === 'You' ? ['black'] : ['white', 'black'];
+    return entries.filter(e => e && RETRY_CATEGORIES.has(e.category) && sides.includes(e.color) && e.bestMove).map(e => e.ply);
+}
+
+function updateRetryButton() {
+    const n = retryPlies().length;
+    $('retryFooter').classList.toggle('hidden', !report);
+    $('retryButton').disabled = n === 0;
+    $('retryCount').textContent = n === 0 ? 'No mistakes to retry — nicely played.' : `${n} moment${n === 1 ? '' : 's'} to fix`;
+}
+
+function startRetry() {
+    const plies = retryPlies();
+    if (!plies.length) return;
+    clearVariation();
+    clearPuzzle();
+    retry = { plies, index: -1, status: 'solving', solved: 0, pending: null };
+    $('retryBanner').classList.remove('hidden');
+    showRetryItem(0);
+}
+
+function showRetryItem(i) {
+    if (!retry) return;
+    if (i >= retry.plies.length) { finishRetry(); return; }
+    retry.index = i;
+    retry.status = 'solving';
+    judgeId++;
+    const ply = retry.plies[i];
+    const entry = entries[ply];
+    selectedPly = ply - 1;
+    positionAt(ply - 1);
+    board.clearSelection();
+    board.render(gameState);
+    const prev = ply > 0 ? game.moves[ply - 1].move : null;
+    board.setLastMove(prev && { x: prev.fromX, y: prev.fromY }, prev && { x: prev.toX, y: prev.toY });
+    board.updateCheckFromGame();
+    board.setArrows([]);
+    board.setBadge(null);
+    highlightMoveCell();
+    renderGraphCursor();
+    refreshEvalBar(evalAtPly(ply - 1));
+
+    $('retryText').textContent = `Retry ${i + 1} of ${retry.plies.length} · ${entry.color === 'white' ? 'White' : 'Black'} to move`;
+    $('retryHintButton').disabled = false;
+    $('retrySolutionButton').disabled = false;
+    $('retryNextButton').textContent = i + 1 < retry.plies.length ? 'Skip →' : 'Finish';
+    setCaption({
+        icon: CATEGORY_SYMBOLS[entry.category], color: CATEGORY_COLORS[entry.category],
+        title: `${moveNumberPrefix(ply)} ${entry.san} was ${CATEGORY_DESCRIPTIONS[entry.category]}`,
+        line: 'Find a better move for this position.',
+    });
+}
+
+function sameSquares(a, b) {
+    return !!a && !!b && a.fromX === b.fromX && a.fromY === b.fromY && a.toX === b.toX && a.toY === b.toY;
+}
+
+async function retryGuess(move) {
+    const ply = retry.plies[retry.index];
+    const entry = entries[ply];
+    const piece = gameState[move.fromY][move.fromX];
+    let promo = null;
+    if (piece.type === 'pawn' && (move.toY === 0 || move.toY === 7)) {
+        promo = await board.askPromotion(move.toX, move.toY, piece.color);
+        if (!promo || !retry || retry.status !== 'solving') return;
+    }
+    const played = game.moves[ply];
+    if (sameSquares(move, played.move) && (promo || null) === (played.promo || null)) {
+        setCaption({ icon: '↺', title: `${entry.san} is the move from the game`, line: 'Try something different.' });
+        return;
+    }
+    const best = entry.bestMove;
+    if (sameSquares(move, best) && (!promo || promo === (best.promo || 'queen'))) {
+        retrySolved(move, promo, { category: 'Best', bestSan: null });
+        return;
+    }
+    // Any other move: let the engine judge it.
+    retry.status = 'checking';
+    retry.pending = { move, promo };
+    board.select(move.fromX, move.fromY);
+    setCaption({ icon: '…', title: 'Checking your move…', line: 'The engine is looking at it.' });
+    judgeId++;
+    worker.postMessage({ type: 'judge', requestId: judgeId, sanMoves: game.sanMoves.slice(0, ply), move: { ...move, promo } });
+}
+
+function onRetryVerdict(verdict) {
+    board.clearSelection();
+    const { move, promo } = retry.pending;
+    if (RETRY_ACCEPTED.has(verdict.category)) {
+        retrySolved(move, promo, verdict);
+        return;
+    }
+    retry.status = 'solving';
+    const san = moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, promo);
+    setCaption({
+        icon: CATEGORY_SYMBOLS[verdict.category], color: CATEGORY_COLORS[verdict.category],
+        title: `${san} would be ${CATEGORY_DESCRIPTIONS[verdict.category]}`,
+        line: 'Not good enough yet — try again, or use a hint.',
+    });
+}
+
+function retrySolved(move, promo, verdict) {
+    const ply = retry.plies[retry.index];
+    const entry = entries[ply];
+    retry.status = 'solved';
+    retry.solved++;
+    const san = moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, promo);
+    applyMoveWithPromotion(move, promo);
+    board.render(gameState);
+    board.setLastMove({ x: move.fromX, y: move.fromY }, { x: move.toX, y: move.toY });
+    board.updateCheckFromGame();
+    board.setBadge({ x: move.toX, y: move.toY, glyph: CATEGORY_SYMBOLS[verdict.category], color: CATEGORY_COLORS[verdict.category] });
+    const best = entry.bestMove;
+    if (verdict.bestSan) board.setArrows([{ from: { x: best.fromX, y: best.fromY }, to: { x: best.toX, y: best.toY }, color: 'rgba(129, 199, 84, 0.85)' }]);
+    const line = verdict.bestSan
+        ? `That works! The engine's top choice was <strong>${escapeHTML(best.san)}</strong>.`
+        : (entry.bestLine && entry.bestLine.length > 1 ? `Line: <span class="san-line">${escapeHTML(formatLine(entry.bestLine, ply))}</span>` : 'That fixes it.');
+    setCaption({ icon: '✓', color: CATEGORY_COLORS.Best, title: `${san} — ${CATEGORY_DESCRIPTIONS[verdict.category]}`, line });
+    afterRetryAttempt();
+}
+
+function retryHint() {
+    if (!retry || retry.status !== 'solving') return;
+    const best = entries[retry.plies[retry.index]].bestMove;
+    board.select(best.fromX, best.fromY);
+    $('retryHintButton').disabled = true;
+    setCaption({ icon: '💡', title: 'Hint', line: 'The highlighted piece has a much better move.' });
+}
+
+function retryReveal() {
+    if (!retry || (retry.status !== 'solving' && retry.status !== 'checking')) return;
+    judgeId++; // drop a verdict that may still be on its way
+    const ply = retry.plies[retry.index];
+    const entry = entries[ply];
+    const best = entry.bestMove;
+    retry.status = 'revealed';
+    board.clearSelection();
+    const legal = getvalidMoves(best.fromX, best.fromY).find(m => m.x === best.toX && m.y === best.toY);
+    applyMoveWithPromotion({ ...best, details: legal || best.details }, best.promo || null);
+    board.render(gameState);
+    board.setLastMove({ x: best.fromX, y: best.fromY }, { x: best.toX, y: best.toY });
+    board.updateCheckFromGame();
+    board.setArrows([{ from: { x: best.fromX, y: best.fromY }, to: { x: best.toX, y: best.toY }, color: 'rgba(129, 199, 84, 0.85)' }]);
+    const line = entry.bestLine && entry.bestLine.length > 1 ? `<span class="san-line">${escapeHTML(formatLine(entry.bestLine, ply))}</span>` : '';
+    setCaption({ icon: '★', color: CATEGORY_COLORS.Best, title: `The best move was ${best.san}`, line });
+    afterRetryAttempt();
+}
+
+function afterRetryAttempt() {
+    $('retryHintButton').disabled = true;
+    $('retrySolutionButton').disabled = true;
+    $('retryNextButton').textContent = retry.index + 1 < retry.plies.length ? 'Next →' : 'Finish';
+}
+
+function finishRetry() {
+    const { solved, plies } = retry;
+    showToast(`Retry finished — fixed ${solved} of ${plies.length} mistake${plies.length === 1 ? '' : 's'}.`, 3500);
+    exitRetry(plies[plies.length - 1]);
+}
+
+function exitRetry(ply) {
+    const target = ply !== undefined ? ply : (retry ? retry.plies[retry.index] : selectedPly);
+    clearRetry();
+    selectPly(target);
+}
+
+function clearRetry() {
+    if (!retry) return;
+    retry = null;
+    judgeId++;
+    $('retryBanner').classList.add('hidden');
+    board.clearSelection();
+}
+
+// ─── PUZZLE BANK GROWTH ────────────────────────────────────────────────────────
+// Every analyzed game adds its Blunder/Miss positions to the pool the Puzzle
+// Trainer (puzzles.html) draws from. Deduplicated by move prefix and capped.
 function estimatePuzzleRating(entry) {
-    const isObviousRecapture = entry.punishMove
-        && entry.punishMove.toX === entry.to.x && entry.punishMove.toY === entry.to.y;
-    let rating = 1000;
-    rating += isObviousRecapture ? -200 : 300;
-    rating += Math.min(400, entry.centipawnLoss / 4);
+    const isRecapture = entry.punishMove && entry.punishMove.toX === entry.to.x && entry.punishMove.toY === entry.to.y;
+    let rating = 1000 + (isRecapture ? -200 : 300) + Math.min(400, entry.centipawnLoss / 4);
+    if (entry.punishLine && entry.punishLine.length >= 5) rating += 100;
     return Math.max(600, Math.min(2200, Math.round(rating)));
 }
 
 function growPuzzleBank(sanMoves, perMove) {
     let bank = [];
     try { bank = JSON.parse(localStorage.getItem(PUZZLE_BANK_KEY)) || []; } catch (e) { bank = []; }
-
-    const existingKeys = new Set(bank.map(p => p.sanPrefix.join('|')));
+    const existing = new Set(bank.map(p => p.sanPrefix.join('|')));
     let added = false;
-
     perMove.forEach((entry, i) => {
         if ((entry.category !== 'Blunder' && entry.category !== 'Miss') || !entry.punishMove) return;
         const sanPrefix = sanMoves.slice(0, i + 1);
         const key = sanPrefix.join('|');
-        if (existingKeys.has(key)) return;
-        existingKeys.add(key);
+        if (existing.has(key)) return;
+        existing.add(key);
+        const p = entry.punishMove;
         bank.push({
             id: 'grown-' + Date.now() + '-' + i,
             sanPrefix,
-            punishMove: entry.punishMove,
+            punishMove: { fromX: p.fromX, fromY: p.fromY, toX: p.toX, toY: p.toY, details: p.details, promo: p.promo || null, san: p.san },
+            solutionLine: entry.punishLine || [],
             rating: estimatePuzzleRating(entry),
             category: entry.category,
             centipawnLoss: Math.min(entry.centipawnLoss, 2000),
@@ -176,446 +1058,12 @@ function growPuzzleBank(sanMoves, perMove) {
         });
         added = true;
     });
-
     if (!added) return;
     if (bank.length > PUZZLE_BANK_CAP) bank = bank.slice(bank.length - PUZZLE_BANK_CAP);
-    localStorage.setItem(PUZZLE_BANK_KEY, JSON.stringify(bank));
+    try { localStorage.setItem(PUZZLE_BANK_KEY, JSON.stringify(bank)); } catch (e) { /* bank is optional */ }
 }
 
-// ─── BOARD ──────────────────────────────────────────────────────────────────────
-function drawEmptyBoard() {
-    const board = document.getElementById('chessboard');
-    board.innerHTML = '';
-    for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const sq = document.createElement('div');
-            sq.className = 'square ' + ((x + y) % 2 === 0 ? 'light' : 'dark');
-            sq.dataset.x = x;
-            sq.dataset.y = y;
-            sq.style.left = `${x * 12.5}%`;
-            sq.style.top  = `${y * 12.5}%`;
-            board.appendChild(sq);
-        }
-    }
-}
-
-function applyRecordedMove(entry) {
-    const isPromoting = movePiece(entry.from.x, entry.from.y, entry.to.x, entry.to.y, entry.details);
-    if (isPromoting) {
-        gameState[entry.to.y][entry.to.x].type = entry.promo || 'queen';
-        currentTurn = currentTurn === 'white' ? 'black' : 'white';
-    }
-}
-
-// Jumps to a real, recorded ply — always discards any active variation, since
-// navigating the main line means "show me what was actually played here."
-function selectPly(ply) {
-    if (!report) return;
-    clearVariation();
-    clearPuzzle();
-
-    selectedPly = Math.max(-1, Math.min(ply, report.perMove.length - 1));
-
-    resetGame();
-    for (let i = 0; i <= selectedPly; i++) applyRecordedMove(report.perMove[i]);
-
-    drawPieces();
-    updateMoveListSelection();
-
-    const tryPuzzleBtn = document.getElementById('tryPuzzleButton');
-
-    if (selectedPly < 0) {
-        setCaption('Starting position', '');
-        clearMoveArrow();
-        if (tryPuzzleBtn) tryPuzzleBtn.classList.add('hidden');
-    } else {
-        const entry = report.perMove[selectedPly];
-        addCategoryBadge(entry.to, entry.category, entry.centipawnLoss);
-        const moveNum = Math.floor(selectedPly / 2) + 1;
-        setCaption(`${moveNum}. ${entry.san} — ${entry.category} (-${entry.centipawnLoss} cp)`, CATEGORY_COLORS[entry.category]);
-        drawMoveArrow(entry.from, entry.to);
-
-        const canPuzzle = (entry.category === 'Blunder' || entry.category === 'Miss') && entry.punishMove;
-        if (tryPuzzleBtn) tryPuzzleBtn.classList.toggle('hidden', !canPuzzle);
-    }
-}
-
-function drawPieces() {
-    const board = document.getElementById('chessboard');
-    board.querySelectorAll('.piece, .on-board-badge').forEach(el => el.remove());
-    for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const piece = gameState[y][x];
-            if (!piece) continue;
-            const el = document.createElement('div');
-            el.className = `piece piece-${piece.color} ${piece.type}`;
-            el.style.left = `${x * 12.5}%`;
-            el.style.top  = `${y * 12.5}%`;
-            board.appendChild(el);
-        }
-    }
-}
-
-function addCategoryBadge(to, category, centipawnLoss) {
-    const board = document.getElementById('chessboard');
-    const badge = document.createElement('div');
-    badge.className = 'on-board-badge';
-    badge.style.left = `${(to.x + 1) * 12.5}%`;
-    badge.style.top  = `${to.y * 12.5}%`;
-    badge.style.backgroundColor = CATEGORY_COLORS[category] || '#888';
-    badge.textContent = CATEGORY_SYMBOLS[category] || '';
-    badge.title = `${category} (-${centipawnLoss} cp)`;
-    board.appendChild(badge);
-}
-
-function setCaption(text, color) {
-    const caption = document.getElementById('moveCaption');
-    caption.textContent = text;
-    caption.style.color = color || '';
-}
-
-function drawMoveArrow(from, to) {
-    const board = document.getElementById('chessboard');
-    clearMoveArrow();
-
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 100 100');
-    svg.setAttribute('preserveAspectRatio', 'none');
-    svg.classList.add('move-arrow-svg');
-
-    const x1 = from.x * 12.5 + 6.25, y1 = from.y * 12.5 + 6.25;
-    const x2 = to.x   * 12.5 + 6.25, y2 = to.y   * 12.5 + 6.25;
-
-    svg.innerHTML = `
-        <defs>
-            <marker id="arrowhead" markerWidth="3" markerHeight="3" refX="1.4" refY="1.5" orient="auto">
-                <polygon points="0 0, 3 1.5, 0 3" fill="rgba(255,255,255,0.7)" />
-            </marker>
-        </defs>
-        <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-              stroke="rgba(255,255,255,0.55)" stroke-width="1.6" marker-end="url(#arrowhead)" />
-    `;
-    board.appendChild(svg);
-}
-
-function clearMoveArrow() {
-    const old = document.querySelector('.move-arrow-svg');
-    if (old) old.remove();
-}
-
-// ─── "WHAT IF" EXPLORATION ──────────────────────────────────────────────────────
-function onSquareClick(x, y) {
-    if (engineThinking || !report) return;
-
-    const piece = gameState[y][x];
-
-    if (piece && piece.color === currentTurn) {
-        clearSquareHighlights();
-        selectedSquare = { x, y };
-        currentValidMoves = getvalidMoves(x, y);
-        highlightSelection(x, y, currentValidMoves);
-        return;
-    }
-
-    if (selectedSquare) {
-        const chosen = currentValidMoves.find(m => m.x === x && m.y === y);
-        if (chosen) {
-            if (puzzleActive) checkPuzzleGuess(selectedSquare.x, selectedSquare.y, x, y, chosen);
-            else playVariationMove(selectedSquare.x, selectedSquare.y, x, y, chosen);
-        }
-        clearSquareHighlights();
-        selectedSquare = null;
-        currentValidMoves = [];
-    }
-}
-
-// ─── PUZZLE MODE ────────────────────────────────────────────────────────────────
-function startPuzzle() {
-    if (selectedPly < 0) return;
-    const entry = report.perMove[selectedPly];
-    if (!entry.punishMove) return;
-
-    clearVariation();
-    puzzleActive = true;
-    puzzlePly = selectedPly;
-    puzzleTarget = entry.punishMove;
-    puzzleSolved = false;
-
-    document.getElementById('puzzleBanner').classList.remove('hidden');
-    document.getElementById('tryPuzzleButton').classList.add('hidden');
-    clearMoveArrow();
-    const toMoveColor = currentTurn === 'white' ? 'White' : 'Black';
-    document.getElementById('puzzleBannerText').textContent = `Find ${toMoveColor}'s best move — punish the ${entry.category.toLowerCase()}!`;
-    setCaption(`Puzzle: find ${toMoveColor}'s best move`, '#c8c8c6');
-}
-
-function checkPuzzleGuess(fromX, fromY, toX, toY, moveDetails) {
-    const correct = fromX === puzzleTarget.fromX && fromY === puzzleTarget.fromY
-        && toX === puzzleTarget.toX && toY === puzzleTarget.toY;
-
-    if (!correct) {
-        setCaption('Not quite — try again!', '#e0402c');
-        return;
-    }
-
-    puzzleSolved = true;
-    const isPawnPromo = gameState[fromY][fromX].type === 'pawn' && (toY === 0 || toY === 7);
-    const san = moveToSAN(fromX, fromY, toX, toY, moveDetails, isPawnPromo ? 'queen' : null);
-    const wasPromoting = movePiece(fromX, fromY, toX, toY, moveDetails);
-    if (wasPromoting) {
-        gameState[toY][toX].type = 'queen';
-        currentTurn = currentTurn === 'white' ? 'black' : 'white';
-    }
-    drawPieces();
-    drawMoveArrow({ x: fromX, y: fromY }, { x: toX, y: toY });
-    setCaption(`Correct! ${san} punishes it.`, '#81b64c');
-    document.getElementById('puzzleBannerText').textContent = 'Solved! Click Exit Puzzle to keep browsing.';
-}
-
-// Clears puzzle mode without navigating (selectPly already calls this too, so
-// any real move-list/graph navigation silently abandons an active puzzle, same
-// behavior as clearVariation()).
-function clearPuzzle() {
-    if (!puzzleActive) return;
-    puzzleActive = false;
-    puzzlePly = -1;
-    puzzleTarget = null;
-    puzzleSolved = false;
-    selectedSquare = null;
-    currentValidMoves = [];
-    clearSquareHighlights();
-    document.getElementById('puzzleBanner').classList.add('hidden');
-}
-
-function highlightSelection(x, y, moves) {
-    const sq = document.querySelector(`.square[data-x="${x}"][data-y="${y}"]`);
-    if (sq) sq.classList.add('selected');
-    for (const m of moves) {
-        const target = document.querySelector(`.square[data-x="${m.x}"][data-y="${m.y}"]`);
-        if (target) target.classList.add(gameState[m.y][m.x] ? 'capture-hint' : 'move-hint');
-    }
-}
-
-function clearSquareHighlights() {
-    document.querySelectorAll('.square.selected, .square.move-hint, .square.capture-hint')
-        .forEach(sq => sq.classList.remove('selected', 'move-hint', 'capture-hint'));
-}
-
-function playVariationMove(fromX, fromY, toX, toY, moveDetails) {
-    const color = currentTurn;
-    const isPawnPromo = gameState[fromY][fromX].type === 'pawn' && (toY === 0 || toY === 7);
-    const promo = isPawnPromo ? 'queen' : null; // no promotion picker on this board — auto-queen
-    const san = moveToSAN(fromX, fromY, toX, toY, moveDetails, promo);
-
-    if (!inVariation) {
-        inVariation = true;
-        variationBranchPly = selectedPly;
-        variation = [];
-        document.getElementById('variationBanner').classList.remove('hidden');
-    }
-
-    const entry = { color, san, from: { x: fromX, y: fromY }, to: { x: toX, y: toY }, details: moveDetails, promo, evalAfter: null };
-    applyRecordedMove(entry);
-    variation.push(entry);
-    variationPly = variation.length - 1;
-
-    drawPieces();
-    renderVariationInMoveList();
-    setCaption(`${san} (your move)`, '#c8c8c6');
-    drawMoveArrow(entry.from, entry.to);
-
-    requestEngineReply();
-}
-
-function requestEngineReply() {
-    engineThinking = true;
-    setCaption('Engine is thinking...', '#c8c8c6');
-
-    const mainLineSAN = report.perMove.slice(0, variationBranchPly + 1).map(m => m.san);
-    const variationMoves = variation.map(v => ({
-        fromX: v.from.x, fromY: v.from.y, toX: v.to.x, toY: v.to.y, details: v.details, promo: v.promo,
-    }));
-
-    worker.postMessage({ type: 'explore', sanMoves: mainLineSAN, variationMoves, color: currentTurn });
-}
-
-function onEngineReply(result) {
-    engineThinking = false;
-
-    if (!result.move) {
-        setCaption('No legal moves for the engine here — game over in this line.', '#c8c8c6');
-        return;
-    }
-
-    const color = currentTurn;
-    const entry = {
-        color, san: result.san,
-        from: { x: result.move.fromX, y: result.move.fromY },
-        to:   { x: result.move.toX,   y: result.move.toY },
-        details: result.move.details, promo: result.move.promo, evalAfter: result.score,
-    };
-    applyRecordedMove(entry);
-    variation.push(entry);
-    variationPly = variation.length - 1;
-
-    drawPieces();
-    renderVariationInMoveList();
-    const evalText = (result.score / 100).toFixed(1);
-    setCaption(`Engine plays ${result.san} (eval ${evalText >= 0 ? '+' : ''}${evalText})`, '#c8c8c6');
-    drawMoveArrow(entry.from, entry.to);
-}
-
-function clearVariation() {
-    if (!inVariation) return;
-    inVariation = false;
-    variation = [];
-    variationBranchPly = -1;
-    variationPly = -1;
-    selectedSquare = null;
-    currentValidMoves = [];
-    clearSquareHighlights();
-    document.getElementById('variationBanner').classList.add('hidden');
-    const old = document.getElementById('variationRow');
-    if (old) old.remove();
-}
-
-// ─── MOVE LIST ─────────────────────────────────────────────────────────────────
-function renderMoveList() {
-    const panel = document.getElementById('move-history-body');
-    panel.innerHTML = '';
-
-    for (let i = 0; i < report.perMove.length; i += 2) {
-        const tr = document.createElement('tr');
-
-        const tdNum = document.createElement('td');
-        tdNum.className = 'move-num';
-        tdNum.textContent = (i / 2 + 1) + '.';
-        tr.appendChild(tdNum);
-
-        [i, i + 1].forEach((idx) => {
-            const td = document.createElement('td');
-            td.className = 'move-san ' + (idx % 2 === 0 ? 'move-white' : 'move-black');
-            const entry = report.perMove[idx];
-            if (entry) {
-                td.dataset.ply = idx;
-                td.title = `${entry.category} (-${entry.centipawnLoss} cp)`;
-
-                td.appendChild(document.createTextNode(entry.san));
-
-                // Suffix glyph appended directly after the SAN, the way real chess
-                // notation does ("Qg5??") — colored by category. Categories with no
-                // traditional symbol (Good/Book) render with no suffix at all.
-                const symbol = CATEGORY_SYMBOLS[entry.category];
-                if (symbol) {
-                    const badge = document.createElement('span');
-                    badge.className = 'move-badge';
-                    badge.style.color = CATEGORY_COLORS[entry.category] || '#888';
-                    badge.textContent = symbol;
-                    td.appendChild(badge);
-                }
-
-                td.addEventListener('click', () => selectPly(idx));
-            }
-            tr.appendChild(td);
-        });
-
-        panel.appendChild(tr);
-    }
-}
-
-function updateMoveListSelection() {
-    document.querySelectorAll('#move-history-body .move-san').forEach(td => {
-        td.classList.toggle('active-ply', Number(td.dataset.ply) === selectedPly);
-    });
-}
-
-// Inserts the current variation as its own line right after the branch point's
-// row, in the compact flowing "5.Nc3 c5 6.Nc4 dxc4" style (not the two-column
-// White/Black table layout), matching a standard analysis-board variation.
-function renderVariationInMoveList() {
-    const old = document.getElementById('variationRow');
-    if (old) old.remove();
-    if (!inVariation || variation.length === 0) return;
-
-    const tbody = document.getElementById('move-history-body');
-    const rows = tbody.querySelectorAll('tr');
-    const branchRowIndex = Math.floor(variationBranchPly / 2);
-
-    const tr = document.createElement('tr');
-    tr.id = 'variationRow';
-    const td = document.createElement('td');
-    td.colSpan = 3;
-    const line = document.createElement('div');
-    line.className = 'variation-line';
-
-    variation.forEach((entry, i) => {
-        const ply = variationBranchPly + 1 + i;
-        const moveNum = Math.floor(ply / 2) + 1;
-        const isWhite = ply % 2 === 0;
-        const prefix = isWhite ? `${moveNum}.` : (i === 0 ? `${moveNum}...` : '');
-
-        const span = document.createElement('span');
-        span.className = 'variation-move';
-        span.dataset.varIdx = i;
-        span.textContent = `${prefix}${entry.san}`;
-        span.addEventListener('click', () => selectVariationPly(i));
-        line.appendChild(span);
-    });
-
-    td.appendChild(line);
-    tr.appendChild(td);
-
-    if (branchRowIndex >= 0 && rows[branchRowIndex]) rows[branchRowIndex].after(tr);
-    else tbody.prepend(tr);
-
-    updateVariationSelection();
-}
-
-function updateVariationSelection() {
-    document.querySelectorAll('.variation-move').forEach(span => {
-        span.classList.toggle('active-ply', Number(span.dataset.varIdx) === variationPly);
-    });
-}
-
-function selectVariationPly(i) {
-    variationPly = i;
-
-    resetGame();
-    for (let k = 0; k <= variationBranchPly; k++) applyRecordedMove(report.perMove[k]);
-    for (let k = 0; k <= i; k++) applyRecordedMove(variation[k]);
-
-    drawPieces();
-    updateVariationSelection();
-
-    const entry = variation[i];
-    if (entry.evalAfter !== null) {
-        const evalText = (entry.evalAfter / 100).toFixed(1);
-        setCaption(`${entry.san} (eval ${evalText >= 0 ? '+' : ''}${evalText})`, '#c8c8c6');
-    } else {
-        setCaption(`${entry.san} (your move)`, '#c8c8c6');
-    }
-    drawMoveArrow(entry.from, entry.to);
-}
-
-// ─── EVAL GRAPH ─────────────────────────────────────────────────────────────────
-function renderGraph() {
-    const graphEl = document.getElementById('reportGraph');
-    graphEl.innerHTML = buildEvalGraphSVG(report.evalGraph);
-
-    const svg = graphEl.querySelector('svg');
-    if (svg) {
-        svg.addEventListener('click', (e) => {
-            const rect = svg.getBoundingClientRect();
-            const frac = (e.clientX - rect.left) / rect.width;
-            const ply = Math.round(frac * (report.evalGraph.length - 1));
-            selectPly(ply);
-        });
-    }
-}
-
-function renderAccuracy() {
-    const accEl = document.getElementById('reportAccuracy');
-    accEl.innerHTML =
-        `<div class="report-accuracy-side">White accuracy<br><strong>${report.accuracy.white}%</strong></div>` +
-        `<div class="report-accuracy-side">Black accuracy<br><strong>${report.accuracy.black}%</strong></div>`;
+function debounce(fn, ms) {
+    let t = null;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }

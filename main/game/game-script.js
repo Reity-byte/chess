@@ -1,519 +1,499 @@
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// ─── LIVE GAME PAGE ────────────────────────────────────────────────────────────
+// Drives game.html: setup, the board (board-ui.js), human input, the engine
+// (in a Web Worker, see ai-worker.js), clocks, takeback/draw/resign, PGN, and
+// save/resume. The rules live in engine.js; this file only orchestrates.
 
-let gameActive       = false;  // true while a game is in progress
-let aiThinking        = false; // true while the AI is searching for a move
-let selectedSquare   = null;
-let currentValidMoves = [];
-let promoTargetX     = null;
-let promoTargetY     = null;
-let pendingPromo      = null;  // { fromX, fromY, tx, ty, chosenMove, color, sanBase }
-let gameResult        = '*';   // PGN result token, set by showGameOverModal from its message
-
-// ─── GAME SETUP STATE ──────────────────────────────────────────────────────────
-let gameMode    = 'human'; // 'human' (vs AI) | 'ai' (AI vs AI)
-let playerColor = 'white'; // the human's color (orientation reference in AI vs AI too)
-let isFlipped   = false;   // true => board is drawn from Black's perspective
-
-let selectedMode  = 'human';
-let selectedColor = 'white';
-
-// Difficulty controls both search depth and eval noise (random centipawn jitter
-// applied once at the root move choice — see ai.js findBestMove). Noise makes
-// weaker levels feel like human mistakes instead of just shallow, predictable play.
+// Difficulty controls search depth and eval noise (random centipawn jitter on
+// each root move's score when the engine picks — weaker levels make human-like
+// slips instead of just playing shallow, predictable moves).
 const DIFFICULTY = {
-    beginner:     { maxDepth: 1, evalNoise: 80 },
-    intermediate: { maxDepth: 2, evalNoise: 30 },
-    expert:       { maxDepth: 4, evalNoise: 10 },
-    master:       { maxDepth: 6, evalNoise: 0  },
+    beginner:     { label: 'Beginner', maxDepth: 1,  evalNoise: 80 },
+    intermediate: { label: 'Casual',   maxDepth: 2,  evalNoise: 30 },
+    expert:       { label: 'Expert',   maxDepth: 6,  evalNoise: 15 },
+    master:       { label: 'Master',   maxDepth: 64, evalNoise: 0  },
 };
-let selectedDifficulty = 'intermediate';
 
-const AI_TIME_HUMAN = 1500;  // ms search budget when playing against a human
-const AI_TIME_SELFPLAY = 500; // ms search budget for AI vs AI (keeps it watchable)
+const AI_TIME_HUMAN = 1500;   // ms search budget when playing against a human
+const AI_TIME_SELFPLAY = 500; // ms per move in Engine vs Engine (keeps it watchable)
+const MIN_REPLY_MS = 250;     // instant (book) replies still get a beat before they land
 
-// ─── TIME CONTROL (chess clock) ────────────────────────────────────────────────
-// `null` selection (Unlimited) means clockState stays null and the clock UI/tick
-// loop are skipped entirely - untimed play behaves exactly as before this feature.
+// `unlimited` has no entry: no clock at all.
 const TIME_CONTROLS = {
     '5|0':   { minutes: 5,  incrementSec: 0  },
     '10|5':  { minutes: 10, incrementSec: 5  },
     '15|10': { minutes: 15, incrementSec: 10 },
 };
-let selectedTimeControl = 'unlimited';
 
-// { white, black: ms remaining; incrementMs; lastTick: Date.now() at last tick;
-//   intervalId } or null when untimed.
-let clockState = null;
+const INPROGRESS_KEY = 'chessInProgressGame';
+const ANALYSIS_HANDOFF_KEY = 'chessGameForAnalysis';
 
-// ─── MOVE HISTORY ─────────────────────────────────────────────────────────────
-// Each entry: { white: 'e4', black: 'e5' | null }
-let moveHistory = [];
+// ─── STATE ─────────────────────────────────────────────────────────────────────
+const settings = { mode: 'human', color: 'white', difficulty: 'intermediate', time: 'unlimited' };
 
-function appendHistoryMove(color, san) {
-    if (color === 'white') {
-        moveHistory.push({ white: san, black: null });
-    } else if (moveHistory.length > 0 && moveHistory[moveHistory.length - 1].black === null) {
-        moveHistory[moveHistory.length - 1].black = san;
-    } else {
-        moveHistory.push({ white: null, black: san });
-    }
-    renderMoveHistory();
+let gameMode = 'human';     // 'human' (vs engine) | 'ai' (engine vs engine)
+let playerColor = 'white';  // the human's color (orientation reference in AI vs AI)
+let difficulty = 'intermediate';
+let timeControl = 'unlimited';
+let isFlipped = false;
+
+let gameActive = false;
+let aiThinking = false;
+let gameToken = 0;          // bumps on every new game/takeback; stale engine replies are dropped
+let gameResult = '*';
+let moveHistory = [];       // [{ white: 'e4', black: 'e5' | null }]
+let clockState = null;      // { white, black (ms), incrementMs, lastTick, intervalId }
+let board = null;
+
+function sanList() {
+    return rowsToSAN(moveHistory);
 }
 
-function renderMoveHistory() {
-    const panel = document.getElementById('move-history-body');
-    if (!panel) return;
+function rowsToSAN(rows) {
+    const out = [];
+    for (const row of rows) {
+        if (row.white) out.push(row.white);
+        if (row.black) out.push(row.black);
+    }
+    return out;
+}
 
-    panel.innerHTML = '';
+function rowsFromSAN(list) {
+    const rows = [];
+    list.forEach((san, i) => {
+        if (i % 2 === 0) rows.push({ white: san, black: null });
+        else rows[rows.length - 1].black = san;
+    });
+    return rows;
+}
 
-    moveHistory.forEach((row, i) => {
-        const tr = document.createElement('tr');
+const other = (c) => c === 'white' ? 'black' : 'white';
+const isHumanTurn = () => gameActive && gameMode === 'human' && currentTurn === playerColor;
+const isEngineTurn = () => gameActive && (gameMode === 'ai' || currentTurn !== playerColor);
 
-        const tdNum = document.createElement('td');
-        tdNum.className = 'move-num';
-        tdNum.textContent = (i + 1) + '.';
+// ─── ENGINE (worker with synchronous fallback) ─────────────────────────────────
+// Workers can't start from file:// in some browsers; then the search runs on
+// the main thread instead (the UI pauses while it thinks, as before).
+const engineClient = {
+    worker: null,
+    broken: false,
+    pending: null,
+    nextId: 1,
 
-        const tdW = document.createElement('td');
-        tdW.className = 'move-san move-white';
-        tdW.textContent = row.white || '';
+    ensure() {
+        if (this.worker || this.broken) return;
+        try {
+            this.worker = new Worker('ai-worker.js?v=7');
+            this.worker.onmessage = (e) => this.onMessage(e.data);
+            this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
+        } catch (e) {
+            this.broken = true;
+        }
+    },
 
-        const tdB = document.createElement('td');
-        tdB.className = 'move-san move-black';
-        tdB.textContent = row.black || '';
+    fail() {
+        this.broken = true;
+        if (this.worker) this.worker.terminate();
+        this.worker = null;
+        const p = this.pending;
+        this.pending = null;
+        if (p) p.runLocally();
+    },
 
-        tr.appendChild(tdNum);
-        tr.appendChild(tdW);
-        tr.appendChild(tdB);
-        panel.appendChild(tr);
+    newGame() {
+        this.cancel();
+        this.ensure();
+        if (this.worker) this.worker.postMessage({ type: 'newGame' });
+        else clearSearchMemory();
+    },
+
+    // Drops any search in flight. The worker is replaced so the next request
+    // doesn't queue behind a search nobody wants anymore.
+    cancel() {
+        if (!this.pending) return;
+        this.pending = null;
+        if (this.worker) { this.worker.terminate(); this.worker = null; }
+    },
+
+    think(params) {
+        this.ensure();
+        return new Promise((resolve, reject) => {
+            const id = this.nextId++;
+            const runLocally = () => setTimeout(() => {
+                try {
+                    resolve(findBestMove(currentTurn, params.timeMs, params.maxDepth, params.evalNoise, params.sanMoves));
+                } catch (err) { reject(err); }
+            }, 30);
+            if (!this.worker) { runLocally(); return; }
+            this.pending = { id, resolve, reject, runLocally };
+            this.worker.postMessage({ type: 'think', id, ...params });
+        });
+    },
+
+    onMessage(d) {
+        if (!this.pending || d.id !== this.pending.id) return;
+        const p = this.pending;
+        this.pending = null;
+        if (d.type === 'error') p.reject(new Error(d.message));
+        else p.resolve({ move: d.move, promo: d.promo });
+    },
+};
+
+// ─── SETUP ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    initBoardThemePicker();
+
+    board = new BoardView(document.getElementById('chessboard'), {
+        canSelect: (x, y) => isHumanTurn() && !aiThinking && !!gameState[y][x] && gameState[y][x].color === currentTurn,
+        legalMoves: (x, y) => getvalidMoves(x, y),
+        onMove: onHumanMove,
+    });
+    board.render(gameState, { animate: false });
+
+    const $ = (id) => document.getElementById(id);
+    const setupModal = $('setupModal');
+
+    // Segmented controls in the setup modal write into `settings`.
+    document.querySelectorAll('#setupModal .segmented').forEach(group => {
+        group.addEventListener('click', (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            settings[group.dataset.group] = btn.dataset.value;
+            syncSetupUI();
+        });
     });
 
-    const scroller = panel.closest('.history-scroll');
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
-}
+    $('beginGameButton').addEventListener('click', () => {
+        setupModal.classList.add('hidden');
+        startGame();
+    });
+    $('cancelSetupButton').addEventListener('click', () => setupModal.classList.add('hidden'));
+    $('newGameButton').addEventListener('click', openSetup);
+    $('restartButton').addEventListener('click', () => { $('gameOverModal').classList.add('hidden'); openSetup(); });
+    $('closeModalButton').addEventListener('click', () => $('gameOverModal').classList.add('hidden'));
+    $('reportButton').addEventListener('click', openReview);
+    $('flipButton').addEventListener('click', () => { isFlipped = !isFlipped; board.setFlipped(isFlipped); updatePlayers(); });
+    $('pgnButton').addEventListener('click', downloadPGN);
+    $('pgnButtonModal').addEventListener('click', downloadPGN);
+    $('copyPgnButton').addEventListener('click', showPgnModal);
+    $('copyPgnButtonModal').addEventListener('click', showPgnModal);
+    $('closePgnModalButton').addEventListener('click', () => $('pgnModal').classList.add('hidden'));
+    $('copyPgnConfirmButton').addEventListener('click', copyPgnToClipboard);
+    $('resignButton').addEventListener('click', resign);
+    $('offerDrawButton').addEventListener('click', offerDraw);
+    $('takebackButton').addEventListener('click', takeback);
 
-// ─── BOARD ORIENTATION HELPERS ─────────────────────────────────────────────────
-function screenX(x) { return isFlipped ? 7 - x : x; }
-function screenY(y) { return isFlipped ? 7 - y : y; }
-
-function placeAt(el, x, y) {
-    el.style.left = `${screenX(x) * 12.5}%`;
-    el.style.top  = `${screenY(y) * 12.5}%`;
-}
-
-// ─── DOM SETUP ────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    const start       = document.getElementById('startButton');
-    const exit        = document.getElementById('exitButton');
-    const board       = document.getElementById('chessboard');
-    const restartBtn  = document.getElementById('restartButton');
-    const reportBtn   = document.getElementById('reportButton');
-    const closeBtn    = document.getElementById('closeModalButton');
-    const modal       = document.getElementById('gameOverModal');
-    const setupModal  = document.getElementById('setupModal');
-    const beginBtn    = document.getElementById('beginGameButton');
-    const colorRow    = document.getElementById('colorChoiceRow');
-
-    if (board) {
-        board.addEventListener('click', e => {
-            const sq = e.target.closest('.square');
-            if (sq) handleSquareClick(sq);
-        });
-    }
-
-    if (start && setupModal) {
-        start.addEventListener('click', () => {
-            if (gameActive) return;
-            setupModal.classList.remove('hidden');
-        });
-    }
-
+    // Landing-page links preselect the setup (?mode=human|ai&difficulty=...);
+    // ?resume=1 continues the saved in-progress game.
     const params = new URLSearchParams(location.search);
+    if (params.get('mode') === 'human' || params.get('mode') === 'ai') settings.mode = params.get('mode');
+    if (DIFFICULTY[params.get('difficulty')]) settings.difficulty = params.get('difficulty');
 
-    // site.html's "Resume Game" button links here with ?resume=1 when a saved
-    // in-progress game exists (see saveInProgressGame/clearInProgressGame).
-    // Resolved here, but actually started at the bottom of this handler, after
-    // every other listener below has been wired up.
     let resumeData = null;
     if (params.get('resume') === '1') {
-        try { resumeData = JSON.parse(localStorage.getItem('chessInProgressGame')); } catch (e) { resumeData = null; }
+        try { resumeData = JSON.parse(localStorage.getItem(INPROGRESS_KEY)); } catch (e) { resumeData = null; }
         if (!resumeData || !Array.isArray(resumeData.moveHistory)) resumeData = null;
     }
 
-    // Landing page links here with ?mode=human|ai (and optionally ?difficulty=...)
-    // to preselect the setup modal and open it immediately instead of requiring
-    // an extra click.
-    const requestedMode = params.get('mode');
-    const requestedDifficulty = params.get('difficulty');
-    if (setupModal && (requestedMode === 'human' || requestedMode === 'ai')) {
-        selectedMode = requestedMode;
-        document.querySelectorAll('.setup-choice[data-mode]').forEach(b =>
-            b.classList.toggle('selected', b.dataset.mode === requestedMode));
-        if (colorRow) colorRow.style.display = requestedMode === 'ai' ? 'none' : '';
-        setupModal.classList.remove('hidden');
-    }
-    if (requestedDifficulty && DIFFICULTY[requestedDifficulty]) {
-        selectedDifficulty = requestedDifficulty;
-        document.querySelectorAll('.setup-choice[data-difficulty]').forEach(b =>
-            b.classList.toggle('selected', b.dataset.difficulty === requestedDifficulty));
-    }
-
-    document.querySelectorAll('.setup-choice[data-mode]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            selectedMode = btn.dataset.mode;
-            document.querySelectorAll('.setup-choice[data-mode]').forEach(b => b.classList.toggle('selected', b === btn));
-            if (colorRow) colorRow.style.display = selectedMode === 'ai' ? 'none' : '';
-        });
-    });
-
-    document.querySelectorAll('.setup-choice[data-color]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            selectedColor = btn.dataset.color;
-            document.querySelectorAll('.setup-choice[data-color]').forEach(b => b.classList.toggle('selected', b === btn));
-        });
-    });
-
-    document.querySelectorAll('.setup-choice[data-difficulty]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            selectedDifficulty = btn.dataset.difficulty;
-            document.querySelectorAll('.setup-choice[data-difficulty]').forEach(b => b.classList.toggle('selected', b === btn));
-        });
-    });
-
-    document.querySelectorAll('.setup-choice[data-time]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            selectedTimeControl = btn.dataset.time;
-            document.querySelectorAll('.setup-choice[data-time]').forEach(b => b.classList.toggle('selected', b === btn));
-        });
-    });
-
-    if (beginBtn) {
-        beginBtn.addEventListener('click', async () => {
-            gameMode = selectedMode;
-            if (gameMode === 'human') {
-                playerColor = selectedColor === 'random'
-                    ? (Math.random() < 0.5 ? 'white' : 'black')
-                    : selectedColor;
-            } else {
-                playerColor = 'white'; // orientation only; no human side in AI vs AI
-            }
-            isFlipped = playerColor === 'black';
-
-            setupModal.classList.add('hidden');
-            board.style.display = 'grid';
-            await startGame();
-        });
-    }
-
-    if (exit)       exit.addEventListener('click', () => { gameActive = false; location.href = '../site.html'; });
-    if (restartBtn) restartBtn.addEventListener('click', () => {
-        modal.classList.add('hidden');
-        gameActive = false;
-        aiThinking = false;
-        selectedSquare = null;
-        currentValidMoves = [];
-        stopClock();
-        setupModal.classList.remove('hidden');
-    });
-    if (closeBtn)   closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
-    if (reportBtn)  reportBtn.addEventListener('click', () => {
-        const sanMoves = [];
-        for (const row of moveHistory) {
-            if (row.white) sanMoves.push(row.white);
-            if (row.black) sanMoves.push(row.black);
-        }
-        if (sanMoves.length === 0) { alert('No moves to analyze yet!'); return; }
-        // Hand the finished game off to the dedicated review page (analysis.html)
-        // via localStorage rather than an in-page modal, so the report gets its
-        // own board + move list, matching a chess.com-style game review.
-        localStorage.setItem('chessGameForAnalysis', JSON.stringify(sanMoves));
-        location.href = 'analysis.html';
-    });
-
-    document.querySelectorAll('.promo-piece').forEach(img => {
-        img.addEventListener('click', e => completePromotion(e.target.getAttribute('data-type')));
-    });
-
-    const pgnBtn      = document.getElementById('pgnButton');
-    const pgnBtnModal = document.getElementById('pgnButtonModal');
-    if (pgnBtn)      pgnBtn.addEventListener('click', downloadPGN);
-    if (pgnBtnModal) pgnBtnModal.addEventListener('click', downloadPGN);
-
-    const copyPgnBtn      = document.getElementById('copyPgnButton');
-    const copyPgnBtnModal = document.getElementById('copyPgnButtonModal');
-    const closePgnModalBtn = document.getElementById('closePgnModalButton');
-    const copyPgnConfirmBtn = document.getElementById('copyPgnConfirmButton');
-    if (copyPgnBtn)      copyPgnBtn.addEventListener('click', showPgnModal);
-    if (copyPgnBtnModal) copyPgnBtnModal.addEventListener('click', showPgnModal);
-    if (closePgnModalBtn) closePgnModalBtn.addEventListener('click', () => document.getElementById('pgnModal').classList.add('hidden'));
-    if (copyPgnConfirmBtn) copyPgnConfirmBtn.addEventListener('click', copyPgnToClipboard);
-
-    const resignBtn     = document.getElementById('resignButton');
-    const offerDrawBtn  = document.getElementById('offerDrawButton');
-    const takebackBtn   = document.getElementById('takebackButton');
-    if (resignBtn)    resignBtn.addEventListener('click', resign);
-    if (offerDrawBtn) offerDrawBtn.addEventListener('click', offerDraw);
-    if (takebackBtn)  takebackBtn.addEventListener('click', takeback);
-
-    updatePlayerTags();
-
-    if (resumeData) {
-        board.style.display = 'grid';
-        startGame(resumeData);
-    }
+    updatePlayers();
+    updateStatus();
+    syncSetupUI();
+    if (resumeData) startGame(resumeData);
+    else openSetup();
 });
 
-// ─── PLAYER TAGS ────────────────────────────────────────────────────────────────
-function updatePlayerTags() {
-    const topName    = document.getElementById('topName');
-    const bottomName = document.getElementById('bottomName');
-    const topAvatar  = document.getElementById('topAvatar');
-    const bottomAvatar = document.getElementById('bottomAvatar');
-    if (!topName || !bottomName) return;
-
-    // Top of the board is whichever color is NOT at the bottom.
-    const bottomColor = isFlipped ? 'black' : 'white';
-    const topColor    = isFlipped ? 'white' : 'black';
-
-    const label = (color) => {
-        if (gameMode === 'ai') return `Engine (${color === 'white' ? 'White' : 'Black'})`;
-        return color === playerColor ? `You (${color === 'white' ? 'White' : 'Black'})` : `Engine (${color === 'white' ? 'White' : 'Black'})`;
-    };
-
-    topName.textContent    = label(topColor);
-    bottomName.textContent = label(bottomColor);
-    topAvatar.textContent    = topColor === 'white' ? '♙' : '♟';
-    bottomAvatar.textContent = bottomColor === 'white' ? '♙' : '♟';
+function syncSetupUI() {
+    document.querySelectorAll('#setupModal .segmented').forEach(group => {
+        group.querySelectorAll('button').forEach(b =>
+            b.classList.toggle('selected', b.dataset.value === settings[group.dataset.group]));
+    });
+    document.getElementById('colorChoiceRow').classList.toggle('hidden', settings.mode === 'ai');
 }
 
-// ─── THINKING INDICATOR ────────────────────────────────────────────────────────
-function setThinkingIndicator(color, on) {
-    const topColor = isFlipped ? 'white' : 'black';
-    const tag = document.getElementById(topColor === color ? 'topName' : 'bottomName')
-                        ?.closest('.player-tag');
-    if (tag) tag.classList.toggle('thinking', on);
+function openSetup() {
+    syncSetupUI();
+    document.getElementById('setupModal').classList.remove('hidden');
 }
 
-// ─── BOARD INIT ───────────────────────────────────────────────────────────────
-function drawBoardDOM() {
-    const board = document.getElementById('chessboard');
-    board.innerHTML = '';
+// ─── GAME LIFECYCLE ────────────────────────────────────────────────────────────
+// `resumeData` (from saveInProgressGame) replays a previously saved game.
+function startGame(resumeData) {
+    gameToken++;
+    engineClient.newGame();
+    stopClock();
 
-    // 1. Draw the Background Squares
-    for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            let square = document.createElement('div');
-            square.className = 'square ' + ((x + y) % 2 === 0 ? 'light' : 'dark');
-            square.dataset.x = x;
-            square.dataset.y = y;
-            placeAt(square, x, y);
-
-            // Rank label on the leftmost screen column; file label on the bottom screen row.
-            // screenX/screenY map logical coords to screen position, so labels flip with the board.
-            if (screenX(x) === 0) {
-                const span = document.createElement('span');
-                span.className = 'coord-rank';
-                span.textContent = String(8 - y);
-                square.appendChild(span);
-            }
-            if (screenY(y) === 7) {
-                const span = document.createElement('span');
-                span.className = 'coord-file';
-                span.textContent = FILE_NAMES[x];
-                square.appendChild(span);
-            }
-
-            board.appendChild(square);
-        }
-    }
-
-    // 2. Draw the Floating Pieces
-    for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const piece = gameState[y][x];
-            if (piece) {
-                const pieceElement = document.createElement('div');
-                pieceElement.id = piece.domId;
-                pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
-                placeAt(pieceElement, x, y);
-                board.appendChild(pieceElement);
-            }
-        }
-    }
-}
-
-// `resumeData` (from localStorage's chessInProgressGame, see saveInProgressGame)
-// replays a previously in-progress game instead of starting fresh - same
-// resetGame()-then-replay pattern the Game Analysis Engine and takeback() use.
-async function startGame(resumeData) {
     if (resumeData) {
         gameMode = resumeData.gameMode;
         playerColor = resumeData.playerColor;
-        selectedDifficulty = resumeData.selectedDifficulty;
-        selectedTimeControl = resumeData.selectedTimeControl;
-        isFlipped = playerColor === 'black';
+        difficulty = DIFFICULTY[resumeData.selectedDifficulty] ? resumeData.selectedDifficulty : 'intermediate';
+        timeControl = resumeData.selectedTimeControl || 'unlimited';
+    } else {
+        gameMode = settings.mode;
+        playerColor = gameMode === 'ai' ? 'white'
+            : settings.color === 'random' ? (Math.random() < 0.5 ? 'white' : 'black') : settings.color;
+        difficulty = settings.difficulty;
+        timeControl = settings.time;
     }
+    isFlipped = playerColor === 'black';
 
-    resetGame();
+    const resumeSAN = resumeData ? rowsToSAN(resumeData.moveHistory) : [];
+    const applied = replaySANFromStart(resumeSAN);
+    moveHistory = rowsFromSAN(resumeSAN.slice(0, applied));
+
     gameActive = true;
+    aiThinking = false;
     gameResult = '*';
-    moveHistory = [];
-
-    if (resumeData) {
-        const sanList = [];
-        for (const row of resumeData.moveHistory) {
-            if (row.white) sanList.push(row.white);
-            if (row.black) sanList.push(row.black);
-        }
-        replaySAN(sanList);
-        moveHistory = resumeData.moveHistory;
-    }
-
-    renderMoveHistory();
-    updatePlayerTags();
-
-    // Resign/draw/takeback only make sense with a human in the game.
-    const liveActions = document.getElementById('liveActionButtons');
-    if (liveActions) liveActions.style.display = gameMode === 'human' ? 'flex' : 'none';
 
     if (resumeData && resumeData.clock) {
-        stopClock();
         clockState = { ...resumeData.clock, lastTick: Date.now(), intervalId: null };
-        clockState.intervalId = setInterval(tickClock, 200);
-        updateClockDisplay();
+        clockState.intervalId = setInterval(tickClock, 100);
     } else {
         startClock();
     }
 
-    drawBoardDOM();
-    updateCheckStatus();
+    board.setFlipped(isFlipped);
+    board.render(gameState, { animate: false });
+    board.setArrows([]);
+    syncBoardMarks();
+    board.setInteractive(gameMode === 'human');
+    document.getElementById('liveActions').classList.toggle('hidden', gameMode !== 'human');
 
-    // Kick off the AI if it has to move first (AI vs AI, or human chose Black).
-    if (gameMode === 'ai' || (gameMode === 'human' && currentTurn !== playerColor)) {
-        setTimeout(playAIMove, 300);
-    }
+    updatePlayers();
+    renderMoves();
+    updateStatus();
+    updateClockDisplay();
+
+    if (isEngineTurn()) setTimeout(playEngineMove, 400);
 }
 
-async function renderBoard() {
-    const board = document.getElementById('chessboard');
-    const activeIds = new Set();
+// Applies `move` (with its promotion piece, if any) for the side to move and
+// runs everything that follows a move: history, sound, clock, board, game end.
+function commitMove(move, promo) {
+    const color = currentTurn;
+    const piece = gameState[move.fromY][move.fromX];
+    const isPromo = piece.type === 'pawn' && (move.toY === 0 || move.toY === 7);
+    const sanBase = moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, isPromo ? (promo || 'queen') : null);
+    applyMoveWithPromotion(move, isPromo ? (promo || 'queen') : null);
+    recordPosition();
+    const san = sanBase + getCheckSuffix(currentTurn);
 
-    // 1. Slide existing pieces to their new coordinates
-    for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const piece = gameState[y][x];
-            if (piece) {
-                activeIds.add(piece.domId);
-                let pieceElement = document.getElementById(piece.domId);
+    if (color === 'white') moveHistory.push({ white: san, black: null });
+    else if (moveHistory.length && moveHistory[moveHistory.length - 1].black === null) moveHistory[moveHistory.length - 1].black = san;
+    else moveHistory.push({ white: null, black: san });
 
-                // If the piece is new (like a promoted Queen), create it!
-                if (!pieceElement) {
-                    pieceElement = document.createElement('div');
-                    pieceElement.id = piece.domId;
-                    board.appendChild(pieceElement);
-                }
+    playSoundForMove(san);
+    if (clockState) clockState[color] += clockState.incrementMs;
 
-                // Update class (handles promotion image swap) and Slide!
-                pieceElement.className = `piece piece-${piece.color} ${piece.type}`;
-                placeAt(pieceElement, x, y);
-            }
-        }
-    }
+    board.render(gameState);
+    syncBoardMarks();
+    renderMoves();
+    updatePlayers();
+    saveInProgressGame();
 
-    // 2. Delete captured pieces from the screen
-    const currentDOMPieces = board.querySelectorAll('.piece');
-    currentDOMPieces.forEach(domPiece => {
-        if (!activeIds.has(domPiece.id)) domPiece.remove();
-    });
+    const status = getGameStatus();
+    if (status) { endGame(status); return; }
+    updateStatus();
+    updateClockDisplay();
+    if (isEngineTurn()) setTimeout(playEngineMove, gameMode === 'ai' ? 300 : 60);
 }
 
-// ─── CLICK HANDLER ────────────────────────────────────────────────────────────
-function handleSquareClick(squareDiv) {
-    if (!gameActive || aiThinking) return;
-    if (gameMode === 'ai') return;                 // no human input in AI vs AI
-    if (currentTurn !== playerColor) return;        // not your turn
+function syncBoardMarks() {
+    board.setLastMove(lastMove ? { x: lastMove.fromX, y: lastMove.fromY } : null,
+                      lastMove ? { x: lastMove.toX, y: lastMove.toY } : null);
+    board.updateCheckFromGame();
+}
 
-    const tx = parseInt(squareDiv.dataset.x);
-    const ty = parseInt(squareDiv.dataset.y);
-    const target = gameState[ty][tx];
+async function onHumanMove(move) {
+    if (!isHumanTurn() || aiThinking) return;
+    const piece = gameState[move.fromY][move.fromX];
+    let promo = null;
+    if (piece.type === 'pawn' && (move.toY === 0 || move.toY === 7)) {
+        const token = gameToken;
+        promo = await board.askPromotion(move.toX, move.toY, piece.color);
+        if (!promo || token !== gameToken || !isHumanTurn()) return;
+    }
+    commitMove(move, promo);
+}
 
-    if (target && target.color === currentTurn) {
-        if (selectedSquare) {
-            selectedSquare.classList.remove('selected');
-            clearMoveHighlights();
-        }
-        squareDiv.classList.add('selected');
-        selectedSquare    = squareDiv;
-        currentValidMoves = getvalidMoves(tx, ty);
-        highlightMoves(currentValidMoves);
+function aiTimeBudget() {
+    if (clockState) return Math.max(100, Math.min(clockState[currentTurn] / 25, AI_TIME_HUMAN));
+    return gameMode === 'ai' ? AI_TIME_SELFPLAY : AI_TIME_HUMAN;
+}
+
+async function playEngineMove() {
+    if (!isEngineTurn() || aiThinking) return;
+    const token = gameToken;
+    const color = currentTurn;
+    const level = DIFFICULTY[difficulty];
+    aiThinking = true;
+    updateStatus();
+    const started = Date.now();
+
+    let result;
+    try {
+        result = await engineClient.think({
+            sanMoves: sanList(), timeMs: aiTimeBudget(), maxDepth: level.maxDepth, evalNoise: level.evalNoise,
+        });
+    } catch (err) {
+        console.error(err);
+        if (token === gameToken) { aiThinking = false; updateStatus(); showToast('Engine error: ' + err.message); }
         return;
     }
+    const wait = MIN_REPLY_MS - (Date.now() - started);
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    if (token !== gameToken || !gameActive || currentTurn !== color) return;
 
-    if (selectedSquare) {
-        const chosenMove = currentValidMoves.find(m => m.x === tx && m.y === ty);
-
-        if (chosenMove) {
-            const fromX = parseInt(selectedSquare.dataset.x);
-            const fromY = parseInt(selectedSquare.dataset.y);
-            const movingColor = gameState[fromY][fromX].color;
-
-            const isPawnPromo = gameState[fromY][fromX]?.type === 'pawn' && (ty === 0 || ty === 7);
-
-            // SAN must be computed BEFORE the board changes (moveToSAN inspects pre-move state).
-            // For promotions the final piece type is unknown yet, so the suffix is filled in later.
-            const sanBase = moveToSAN(fromX, fromY, tx, ty, chosenMove, null);
-            if (isPawnPromo) {
-                pendingPromo = { fromX, fromY, tx, ty, chosenMove, color: movingColor, sanBase };
-            }
-
-            const isPromoting = movePiece(fromX, fromY, tx, ty, chosenMove);
-
-            selectedSquare.classList.remove('selected');
-            selectedSquare    = null;
-            clearMoveHighlights();
-            currentValidMoves = [];
-
-            highlightLastMove(fromX, fromY, tx, ty);
-            renderBoard();
-
-            if (isPromoting) {
-                showPromotionModal(tx, ty, movingColor);
-            } else {
-                const finalSan = sanBase + getCheckSuffix(currentTurn);
-                appendHistoryMove(movingColor, finalSan);
-                playSoundForMove(finalSan);
-                applyIncrement(movingColor);
-                recordPosition();
-                updateCheckStatus();
-                saveInProgressGame();
-                const over = checkGameOver();
-                if (over) { gameActive = false; }
-                else if (currentTurn !== playerColor) {
-                    setTimeout(playAIMove, 300);
-                }
-            }
-        } else {
-            selectedSquare.classList.remove('selected');
-            selectedSquare    = null;
-            clearMoveHighlights();
-            currentValidMoves = [];
-        }
-    }
+    aiThinking = false;
+    if (!result.move) { endGame(getGameStatus()); return; }
+    commitMove(result.move, result.promo);
 }
 
-// ─── CHESS CLOCK ────────────────────────────────────────────────────────────────
+function endGame(status) {
+    if (!status) return;
+    gameActive = false;
+    aiThinking = false;
+    gameToken++;
+    engineClient.cancel();
+    stopClock();
+    clearInProgressGame();
+    playGameOverSound();
+    gameResult = status.result;
+    board.setInteractive(false);
+    updateStatus(status);
+    updateClockDisplay();
+    setTimeout(() => showGameOverModal(status), 450);
+}
+
+// ─── PLAYERS, CAPTURES, STATUS ─────────────────────────────────────────────────
+const START_COUNTS = { pawn: 8, knight: 2, bishop: 2, rook: 2, queen: 1 };
+const CAPTURE_ORDER = ['queen', 'rook', 'bishop', 'knight', 'pawn'];
+
+function playerLabel(color) {
+    if (gameMode === 'ai') return `Engine · ${color === 'white' ? 'White' : 'Black'}`;
+    return color === playerColor ? 'You' : `Engine · ${DIFFICULTY[difficulty].label}`;
+}
+
+function updatePlayers() {
+    const topColor = isFlipped ? 'white' : 'black';
+    const bottomColor = other(topColor);
+    const counts = { white: {}, black: {} };
+    const material = { white: 0, black: 0 };
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            if (!p || p.type === 'king') continue;
+            counts[p.color][p.type] = (counts[p.color][p.type] || 0) + 1;
+            material[p.color] += PIECE_VALUES[p.type];
+        }
+    }
+    const fill = (prefix, color) => {
+        document.getElementById(prefix + 'Name').textContent = playerLabel(color);
+        document.getElementById(prefix + 'Avatar').className = `piece-icon ${color} king`;
+        const cap = document.getElementById(prefix + 'Captured');
+        cap.innerHTML = '';
+        // Pieces this side has taken = the opponent's pieces missing from the board.
+        for (const type of CAPTURE_ORDER) {
+            const missing = Math.max(0, START_COUNTS[type] - (counts[other(color)][type] || 0));
+            if (!missing) continue;
+            const group = document.createElement('span');
+            group.className = 'group';
+            for (let i = 0; i < missing; i++) group.appendChild(pieceIcon(other(color), type));
+            cap.appendChild(group);
+        }
+        const diff = Math.round((material[color] - material[other(color)]) / 100);
+        if (diff > 0) {
+            const d = document.createElement('span');
+            d.className = 'material-diff';
+            d.textContent = `+${diff}`;
+            cap.appendChild(d);
+        }
+    };
+    fill('top', topColor);
+    fill('bottom', bottomColor);
+    updateClockDisplay();
+}
+
+function updateStatus(finalStatus) {
+    const text = document.getElementById('statusText');
+    const sub = document.getElementById('statusSub');
+    const dot = document.getElementById('statusDot');
+    const chip = document.getElementById('levelChip');
+    chip.hidden = !gameActive && !finalStatus;
+    chip.textContent = gameMode === 'ai' ? 'Engine vs Engine' : DIFFICULTY[difficulty].label;
+    dot.className = 'status-dot';
+
+    if (finalStatus) {
+        text.textContent = resultHeadline(finalStatus.result);
+        sub.textContent = finalStatus.message;
+    } else if (!gameActive) {
+        text.textContent = 'Ready to play';
+        sub.textContent = 'Start a new game to begin.';
+    } else {
+        const toMove = currentTurn === 'white' ? 'White' : 'Black';
+        const check = isInCheck(currentTurn);
+        dot.classList.add(check ? 'alert' : 'live');
+        if (gameMode === 'ai') {
+            text.textContent = check ? `${toMove} is in check` : `${toMove} to move`;
+            sub.textContent = aiThinking ? 'Engine is thinking…' : 'Engine vs Engine';
+        } else if (currentTurn === playerColor) {
+            text.textContent = check ? 'Check! Your move' : 'Your move';
+            sub.textContent = `You play ${playerColor === 'white' ? 'White' : 'Black'}`;
+        } else {
+            text.textContent = 'Engine is thinking…';
+            sub.textContent = check ? 'The engine is in check' : `${toMove} to move`;
+        }
+    }
+    const opening = typeof identifyOpening === 'function' ? identifyOpening(sanList()).name : null;
+    document.getElementById('openingName').textContent = opening || '';
+    for (const id of ['topStrip', 'bottomStrip']) {
+        const strip = document.getElementById(id);
+        const color = (id === 'topStrip') === isFlipped ? 'white' : 'black';
+        strip.classList.toggle('thinking', aiThinking && currentTurn === color && gameActive);
+    }
+    const canAct = gameActive && gameMode === 'human';
+    document.getElementById('takebackButton').disabled = !canAct || sanList().length === 0;
+    document.getElementById('offerDrawButton').disabled = !canAct || aiThinking;
+    document.getElementById('resignButton').disabled = !canAct;
+}
+
+function resultHeadline(result) {
+    if (result === '1/2-1/2') return 'Draw';
+    const winner = result === '1-0' ? 'white' : 'black';
+    if (gameMode === 'human') return winner === playerColor ? 'You won!' : 'You lost';
+    return `${winner === 'white' ? 'White' : 'Black'} wins`;
+}
+
+function renderMoves() {
+    const grid = document.getElementById('movesGrid');
+    grid.innerHTML = '';
+    const total = sanList().length;
+    moveHistory.forEach((row, i) => {
+        const num = document.createElement('div');
+        num.className = 'mv-num';
+        num.textContent = `${i + 1}.`;
+        grid.appendChild(num);
+        [row.white, row.black].forEach((san, j) => {
+            const cell = document.createElement('div');
+            cell.className = 'mv';
+            cell.textContent = san || (j === 0 && !row.white ? '…' : '');
+            if (san && i * 2 + j === total - 1) cell.classList.add('latest', 'active');
+            grid.appendChild(cell);
+        });
+    });
+    document.getElementById('movesEmpty').classList.toggle('hidden', total > 0);
+    const scroller = document.getElementById('movesScroll');
+    scroller.scrollTop = scroller.scrollHeight;
+}
+
+// ─── CLOCK ─────────────────────────────────────────────────────────────────────
 function startClock() {
     stopClock();
-    const tc = TIME_CONTROLS[selectedTimeControl];
-    if (!tc) { clockState = null; updateClockDisplay(); return; } // Unlimited
-
+    const tc = TIME_CONTROLS[timeControl];
+    if (!tc) { clockState = null; return; }
     clockState = {
-        white: tc.minutes * 60 * 1000,
-        black: tc.minutes * 60 * 1000,
-        incrementMs: tc.incrementSec * 1000,
-        lastTick: Date.now(),
+        white: tc.minutes * 60000, black: tc.minutes * 60000,
+        incrementMs: tc.incrementSec * 1000, lastTick: Date.now(), intervalId: null,
     };
-    clockState.intervalId = setInterval(tickClock, 200);
-    updateClockDisplay();
+    clockState.intervalId = setInterval(tickClock, 100);
 }
 
 function stopClock() {
@@ -526,297 +506,137 @@ function tickClock() {
     const now = Date.now();
     clockState[currentTurn] -= now - clockState.lastTick;
     clockState.lastTick = now;
-
     if (clockState[currentTurn] <= 0) {
         clockState[currentTurn] = 0;
-        updateClockDisplay();
-        stopClock();
-        gameActive = false;
-        const winner = currentTurn === 'white' ? 'Black' : 'White';
-        showGameOverModal(`${winner} Wins on Time!`);
+        const winner = other(currentTurn);
+        endGame({ reason: 'timeout', result: winner === 'white' ? '1-0' : '0-1',
+                  message: `${winner === 'white' ? 'White' : 'Black'} wins on time` });
         return;
     }
     updateClockDisplay();
 }
 
-// Called right after a move completes, crediting that color's increment (Fischer-style).
-function applyIncrement(color) {
-    if (!clockState) return;
-    clockState[color] += clockState.incrementMs;
-}
-
-// ─── SAVE / RESUME IN-PROGRESS GAME ────────────────────────────────────────────
-const INPROGRESS_KEY = 'chessInProgressGame';
-
-function saveInProgressGame() {
-    if (!gameActive || gameMode !== 'human') return; // nothing to resume in AI vs AI
-    localStorage.setItem(INPROGRESS_KEY, JSON.stringify({
-        moveHistory, gameMode, playerColor, selectedDifficulty, selectedTimeControl,
-        clock: clockState ? { white: clockState.white, black: clockState.black, incrementMs: clockState.incrementMs } : null,
-    }));
-}
-
-function clearInProgressGame() {
-    localStorage.removeItem(INPROGRESS_KEY);
-}
-
 function formatClock(ms) {
     const totalSec = Math.max(0, Math.ceil(ms / 1000));
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return `${m}:${String(s).padStart(2, '0')}`;
+    if (ms < 10000) return (Math.max(0, ms) / 1000).toFixed(1);
+    return `${Math.floor(totalSec / 60)}:${String(totalSec % 60).padStart(2, '0')}`;
 }
 
 function updateClockDisplay() {
-    const topEl = document.getElementById('topTime');
-    const bottomEl = document.getElementById('bottomTime');
-    if (!topEl || !bottomEl) return;
-
-    if (!clockState) { topEl.textContent = ''; bottomEl.textContent = ''; return; }
-
-    const bottomColor = isFlipped ? 'black' : 'white';
-    const topColor    = isFlipped ? 'white' : 'black';
-
-    topEl.textContent = formatClock(clockState[topColor]);
-    bottomEl.textContent = formatClock(clockState[bottomColor]);
-    topEl.classList.toggle('clock-low', clockState[topColor] < 30000);
-    bottomEl.classList.toggle('clock-low', clockState[bottomColor] < 30000);
-}
-
-// ─── AI TURN(S) ─────────────────────────────────────────────────────────────────
-// With a clock running, the AI's search budget is derived from its own remaining
-// time (capped so a single move can't eat too much of it) rather than the fixed
-// constants, so its thinking time is naturally paid for out of its own clock.
-function aiTimeBudget() {
-    if (clockState) return Math.max(100, Math.min(clockState[currentTurn] / 20, AI_TIME_HUMAN));
-    return gameMode === 'ai' ? AI_TIME_SELFPLAY : AI_TIME_HUMAN;
-}
-function aiDepth()      { return DIFFICULTY[selectedDifficulty].maxDepth; }
-function aiEvalNoise()  { return DIFFICULTY[selectedDifficulty].evalNoise; }
-
-async function playAIMove() {
-    if (!gameActive || aiThinking) return;
-    aiThinking = true;
-    const color = currentTurn;
-    setThinkingIndicator(color, true);
-
-    // Yield to the browser so the thinking indicator repaints before the
-    // synchronous search blocks the main thread.
-    await sleep(0);
-
-    const result = makeAIMove(color, aiTimeBudget(), aiDepth(), aiEvalNoise());
-
-    aiThinking = false;
-    setThinkingIndicator(color, false);
-
-    if (!result) {
-        gameActive = false;
-        checkGameOver();
-        return;
-    }
-
-    appendHistoryMove(result.color, result.san);
-    playSoundForMove(result.san);
-    applyIncrement(result.color);
-    renderBoard();
-    highlightLastMove(result.move.fromX, result.move.fromY, result.move.toX, result.move.toY);
-    updateCheckStatus();
-    saveInProgressGame();
-
-    const over = checkGameOver();
-    if (over) { gameActive = false; return; }
-
-    // Keep going if it's still an AI's turn (AI vs AI, or AI just moved and it's AI's turn again
-    // because the human is the opposite color).
-    if (gameMode === 'ai' || currentTurn !== playerColor) {
-        setTimeout(playAIMove, gameMode === 'ai' ? 400 : 300);
+    const topColor = isFlipped ? 'white' : 'black';
+    for (const [id, color] of [['topClock', topColor], ['bottomClock', other(topColor)]]) {
+        const el = document.getElementById(id);
+        if (!clockState) { el.textContent = ''; continue; }
+        el.textContent = formatClock(clockState[color]);
+        el.classList.toggle('active', gameActive && currentTurn === color);
+        el.classList.toggle('low', clockState[color] < 20000);
     }
 }
 
-// ─── HIGHLIGHT HELPERS ────────────────────────────────────────────────────────
-function highlightMoves(moves) {
-    for (const m of moves) {
-        const sq = document.querySelector(`.square[data-x="${m.x}"][data-y="${m.y}"]`);
-        if (sq) sq.classList.add(gameState[m.y][m.x] ? 'capture-hint' : 'move-hint');
-    }
-}
-function clearMoveHighlights() {
-    document.querySelectorAll('.square.move-hint, .square.capture-hint')
-            .forEach(sq => sq.classList.remove('move-hint', 'capture-hint'));
-}
-function highlightLastMove(fromX, fromY, toX, toY) {
-    document.querySelectorAll('.square.last-move').forEach(sq => sq.classList.remove('last-move'));
-    const from = document.querySelector(`.square[data-x="${fromX}"][data-y="${fromY}"]`);
-    const to   = document.querySelector(`.square[data-x="${toX}"][data-y="${toY}"]`);
-    if (from) from.classList.add('last-move');
-    if (to)   to.classList.add('last-move');
-}
-
-// ─── CHECK STATUS ─────────────────────────────────────────────────────────────
-function updateCheckStatus() {
-    document.querySelectorAll('.square.in-check').forEach(sq => sq.classList.remove('in-check'));
-    const kp = findKing(currentTurn);
-    if (!kp) return;
-    const enemy = currentTurn === 'white' ? 'black' : 'white';
-    if (isSquareAttacked(kp.x, kp.y, enemy)) {
-        const sq = document.querySelector(`.square[data-x="${kp.x}"][data-y="${kp.y}"]`);
-        if (sq) sq.classList.add('in-check');
-    }
-}
-
-// ─── RESIGN / OFFER DRAW / TAKEBACK (vs-AI mode only) ─────────────────────────
+// ─── RESIGN / DRAW / TAKEBACK ──────────────────────────────────────────────────
 function resign() {
     if (!gameActive || gameMode !== 'human') return;
-    gameActive = false;
-    const winner = playerColor === 'white' ? 'Black' : 'White';
-    showGameOverModal(`You resigned! ${winner} Wins!`);
+    const winner = other(playerColor);
+    endGame({ reason: 'resign', result: winner === 'white' ? '1-0' : '0-1',
+              message: `You resigned — ${winner === 'white' ? 'White' : 'Black'} wins` });
 }
 
+// The engine accepts only when its static evaluation says it isn't better.
 function offerDraw() {
-    if (!gameActive || gameMode !== 'human') return;
-    const aiColor = playerColor === 'white' ? 'black' : 'white';
-    // A quick static eval (no search) from the engine's perspective - simple,
-    // deterministic accept/decline rule, no new AI plumbing needed.
-    const scoreForAI = evaluateForColor(aiColor);
-    if (scoreForAI < 150) {
-        gameActive = false;
-        showGameOverModal('Draw agreed!');
-    } else {
-        alert('The engine declines your draw offer.');
-    }
-}
-
-// Resolves a played SAN string to a move + promotion type on the LIVE board -
-// the same pattern analysis-worker.js's resolveSAN uses, just against gameState
-// directly instead of the worker's isolated copy.
-function resolveSANLive(color, san) {
-    const moves = getAllValidMoves(color);
-    for (const move of moves) {
-        const piece = gameState[move.fromY][move.fromX];
-        const isPromo = piece.type === 'pawn' && (move.toY === 0 || move.toY === 7);
-        if (isPromo) {
-            for (const promo of ['queen', 'rook', 'bishop', 'knight']) {
-                if (moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, promo) === san) {
-                    return { move, promo };
-                }
-            }
-        } else if (moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, null) === san) {
-            return { move, promo: null };
-        }
-    }
-    return null;
-}
-
-function flattenMoveHistorySAN() {
-    const sanList = [];
-    for (const row of moveHistory) {
-        if (row.white) sanList.push(row.white);
-        if (row.black) sanList.push(row.black);
-    }
-    return sanList;
-}
-
-// Replays `sanList` (each already carrying its original +/# suffix) from a
-// fresh board, silently - used to rebuild the position after a takeback.
-function replaySAN(sanList) {
-    resetGame();
-    for (const rawSan of sanList) {
-        const color = currentTurn;
-        const san = rawSan.replace(/[+#]$/, '');
-        const resolved = resolveSANLive(color, san);
-        if (!resolved) break;
-        const isPromoting = movePiece(resolved.move.fromX, resolved.move.fromY, resolved.move.toX, resolved.move.toY, resolved.move.details);
-        if (isPromoting) {
-            gameState[resolved.move.toY][resolved.move.toX].type = resolved.promo || 'queen';
-            currentTurn = currentTurn === 'white' ? 'black' : 'white';
-        }
-        recordPosition();
-    }
-}
-
-function takeback() {
     if (!gameActive || gameMode !== 'human' || aiThinking) return;
-    const sanList = flattenMoveHistorySAN();
-    if (sanList.length === 0) return;
-
-    // Undo back to right before the human's own last move: drop the AI's reply
-    // (if any) and the human's move that preceded it, so it's the human's turn
-    // again at the same position they had before.
-    sanList.pop();
-    while (sanList.length > 0 && (sanList.length % 2 === 0 ? 'white' : 'black') !== playerColor) {
-        sanList.pop();
+    if (evaluateForColor(other(playerColor)) < 100) {
+        endGame({ reason: 'agreement', result: '1/2-1/2', message: 'Draw by agreement' });
+    } else {
+        showToast('The engine declines your draw offer.');
     }
-
-    replaySAN(sanList);
-    moveHistory = [];
-    sanList.forEach((san, i) => appendHistoryMove(i % 2 === 0 ? 'white' : 'black', san));
-
-    selectedSquare = null;
-    currentValidMoves = [];
-    clearMoveHighlights();
-    document.querySelectorAll('.square.last-move').forEach(sq => sq.classList.remove('last-move'));
-    renderBoard();
-    updateCheckStatus();
-    saveInProgressGame();
 }
 
-// ─── MODALS ───────────────────────────────────────────────────────────────────
-function showGameOverModal(message) {
-    stopClock();
-    clearInProgressGame();
-    playGameOverSound();
-    gameResult = resultFromMessage(message);
-    document.getElementById('modalMessage').textContent = message;
+// Undoes back to the human's previous turn (the engine's reply and the human's
+// move before it). Works while the engine is thinking, too.
+function takeback() {
+    if (!gameActive || gameMode !== 'human') return;
+    const list = sanList();
+    if (list.length === 0) return;
+    gameToken++;
+    engineClient.cancel();
+    aiThinking = false;
+
+    list.pop();
+    while (list.length > 0 && (list.length % 2 === 0 ? 'white' : 'black') !== playerColor) list.pop();
+
+    replaySANFromStart(list);
+    moveHistory = rowsFromSAN(list);
+    board.clearSelection();
+    board.render(gameState);
+    syncBoardMarks();
+    renderMoves();
+    updatePlayers();
+    updateStatus();
+    saveInProgressGame();
+    if (isEngineTurn()) setTimeout(playEngineMove, 300);
+}
+
+// ─── SAVE / RESUME ─────────────────────────────────────────────────────────────
+function saveInProgressGame() {
+    if (!gameActive || gameMode !== 'human') return;
+    try {
+        localStorage.setItem(INPROGRESS_KEY, JSON.stringify({
+            moveHistory, gameMode, playerColor, selectedDifficulty: difficulty, selectedTimeControl: timeControl,
+            clock: clockState ? { white: clockState.white, black: clockState.black, incrementMs: clockState.incrementMs } : null,
+        }));
+    } catch (e) { /* storage full or unavailable: resume just won't be offered */ }
+}
+
+function clearInProgressGame() {
+    try { localStorage.removeItem(INPROGRESS_KEY); } catch (e) { /* ignore */ }
+}
+
+// ─── GAME OVER + REVIEW HANDOFF ────────────────────────────────────────────────
+function showGameOverModal(status) {
+    document.getElementById('gameOverTitle').textContent = resultHeadline(status.result);
+    document.getElementById('gameOverReason').textContent = status.message;
+    document.getElementById('gameOverScore').textContent =
+        status.result === '1/2-1/2' ? '½–½' : status.result.replace('-', '–');
+    const n = moveHistory.length;
+    document.getElementById('gameOverMoves').textContent = `${n} move${n === 1 ? '' : 's'}`;
+    document.getElementById('reportButton').disabled = sanList().length === 0;
     document.getElementById('gameOverModal').classList.remove('hidden');
 }
 
-// Maps a game-over message (the only place an outcome is decided) to a PGN
-// result token. Falls back to the draw token for any non-checkmate ending
-// (stalemate, threefold, 50-move, insufficient material, resignation-to-come).
-function resultFromMessage(message) {
-    if (/WHITE Wins/i.test(message)) return '1-0';
-    if (/BLACK Wins/i.test(message)) return '0-1';
-    return '1/2-1/2';
+function openReview() {
+    const sans = sanList();
+    if (sans.length === 0) { showToast('No moves to review yet.'); return; }
+    try {
+        localStorage.setItem(ANALYSIS_HANDOFF_KEY, JSON.stringify({
+            sanMoves: sans,
+            white: playerLabel('white'),
+            black: playerLabel('black'),
+            result: gameActive ? '*' : gameResult,
+        }));
+    } catch (e) { showToast('Could not hand the game to the review page.'); return; }
+    location.href = 'analysis.html';
 }
 
-// ─── PGN EXPORT ───────────────────────────────────────────────────────────────
-function playerLabel(color) {
-    if (gameMode === 'ai') return 'Engine';
-    return color === playerColor ? 'You' : 'Engine';
-}
-
+// ─── PGN EXPORT ────────────────────────────────────────────────────────────────
 function buildPGN() {
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
     const result = gameActive ? '*' : gameResult;
-
     const headers = [
-        `[Event "Casual Game"]`,
-        `[Site "Chess Site"]`,
-        `[Date "${today}"]`,
-        `[Round "1"]`,
-        `[White "${playerLabel('white')}"]`,
-        `[Black "${playerLabel('black')}"]`,
-        `[Result "${result}"]`,
+        '[Event "Casual Game"]', '[Site "Chess Site"]', `[Date "${today}"]`, '[Round "1"]',
+        `[White "${playerLabel('white')}"]`, `[Black "${playerLabel('black')}"]`, `[Result "${result}"]`,
     ];
-
     let movetext = '';
     moveHistory.forEach((row, i) => {
-        movetext += `${i + 1}. `;
-        if (row.white) movetext += `${row.white} `;
+        movetext += `${i + 1}. ${row.white || '...'} `;
         if (row.black) movetext += `${row.black} `;
     });
-    movetext += result;
-
-    return headers.join('\n') + '\n\n' + movetext.trim() + '\n';
+    return headers.join('\n') + '\n\n' + (movetext + result).trim() + '\n';
 }
 
 function downloadPGN() {
-    if (moveHistory.length === 0) { alert('No moves to export yet!'); return; }
-
-    const pgn = buildPGN();
-    const blob = new Blob([pgn], { type: 'application/x-chess-pgn' });
+    if (sanList().length === 0) { showToast('No moves to export yet.'); return; }
+    const blob = new Blob([buildPGN()], { type: 'application/x-chess-pgn' });
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement('a');
     a.href = url;
     a.download = `chess-game-${new Date().toISOString().slice(0, 10)}.pgn`;
@@ -826,12 +646,8 @@ function downloadPGN() {
     URL.revokeObjectURL(url);
 }
 
-// Shows the PGN as plain selectable/copyable text instead of triggering a file
-// download - useful for pasting straight into a lichess/chess.com import box or
-// a message, without a .pgn file to manage.
 function showPgnModal() {
-    if (moveHistory.length === 0) { alert('No moves to export yet!'); return; }
-
+    if (sanList().length === 0) { showToast('No moves to export yet.'); return; }
     const textarea = document.getElementById('pgnTextArea');
     textarea.value = buildPGN();
     document.getElementById('pgnModal').classList.remove('hidden');
@@ -842,51 +658,11 @@ function showPgnModal() {
 function copyPgnToClipboard() {
     const textarea = document.getElementById('pgnTextArea');
     textarea.select();
-
-    // navigator.clipboard requires a secure context (https/localhost); document.
-    // execCommand('copy') is deprecated but still works everywhere else as a
-    // fallback, and doesn't need any extra permission prompt.
+    const done = () => showToast('PGN copied to clipboard.');
     if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(textarea.value).catch(() => document.execCommand('copy'));
+        navigator.clipboard.writeText(textarea.value).then(done, () => { document.execCommand('copy'); done(); });
     } else {
         document.execCommand('copy');
-    }
-}
-
-function showPromotionModal(x, y, color) {
-    promoTargetX = x;
-    promoTargetY = y;
-    const s = color === 'white' ? 'w' : 'b';
-    document.getElementById('promo-queen').src  = `pieces/queen-${s}.png`;
-    document.getElementById('promo-rook').src   = `pieces/rook-${s}.png`;
-    document.getElementById('promo-bishop').src = `pieces/bishop-${s}.png`;
-    document.getElementById('promo-knight').src = `pieces/knight-${s}.png`;
-    document.getElementById('promotionModal').classList.remove('hidden');
-}
-
-function completePromotion(pieceType) {
-    const PROMO_LETTER = { queen: 'Q', rook: 'R', bishop: 'B', knight: 'N' };
-
-    gameState[promoTargetY][promoTargetX].type = pieceType;
-    document.getElementById('promotionModal').classList.add('hidden');
-    currentTurn = currentTurn === 'white' ? 'black' : 'white';
-
-    if (pendingPromo) {
-        const san = pendingPromo.sanBase + '=' + PROMO_LETTER[pieceType] + getCheckSuffix(currentTurn);
-        appendHistoryMove(pendingPromo.color, san);
-        playSoundForMove(san);
-        applyIncrement(pendingPromo.color);
-        pendingPromo = null;
-    }
-
-    renderBoard();
-    recordPosition();
-    updateCheckStatus();
-    saveInProgressGame();
-
-    const over = checkGameOver();
-    if (over) { gameActive = false; return; }
-    if (currentTurn !== playerColor) {
-        setTimeout(playAIMove, 300);
+        done();
     }
 }

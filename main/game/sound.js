@@ -3,7 +3,8 @@
 // to keep the project asset-free and consistent with the "vanilla JS" approach.
 
 let audioCtx = null;
-let soundMuted = localStorage.getItem('chessSoundMuted') === 'true';
+let soundMuted = false;
+try { soundMuted = localStorage.getItem('chessSoundMuted') === 'true'; } catch (e) { /* storage unavailable */ }
 
 function getAudioContext() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -72,7 +73,7 @@ function initSoundToggle() {
     setSoundButtonIcon(btn);
     btn.addEventListener('click', () => {
         soundMuted = !soundMuted;
-        localStorage.setItem('chessSoundMuted', String(soundMuted));
+        try { localStorage.setItem('chessSoundMuted', String(soundMuted)); } catch (e) { /* not persisted */ }
         setSoundButtonIcon(btn);
     });
 }

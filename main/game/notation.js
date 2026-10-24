@@ -74,3 +74,55 @@ function moveToSAN(fromX, fromY, toX, toY, moveDetails = null, promoType = null)
     // when the moving piece is about to be promoted to something else.
     return letter + disambig + pawnFile + (isCapture ? 'x' : '') + toFile + toRank + promoSuffix;
 }
+
+// ─── SAN -> MOVE RESOLUTION ─────────────────────────────────────────────────
+// Finds the legal move for `color` matching a SAN string on the current board.
+// Shared by every replay path (resume, takeback, analysis, puzzles, PGN import).
+// Tolerates check/annotation suffixes ("Nf3+", "Qg5?!"), zero-castling ("0-0")
+// and promotions written without "=" ("e8Q"). Returns { move, promo } or null.
+function normalizeSAN(raw) {
+    let san = String(raw).trim().replace(/[+#!?]+$/, '').replace(/0-0-0/g, 'O-O-O').replace(/0-0/g, 'O-O');
+    const m = san.match(/^([a-h]?x?[a-h][18])([QRBN])$/);
+    if (m) san = `${m[1]}=${m[2]}`;
+    return san;
+}
+
+const PROMO_FROM_LETTER = { Q: 'queen', R: 'rook', B: 'bishop', N: 'knight' };
+
+function resolveSAN(color, rawSan) {
+    const san = normalizeSAN(rawSan);
+    const promoMatch = san.match(/=([QRBN])$/);
+    const promo = promoMatch ? PROMO_FROM_LETTER[promoMatch[1]] : null;
+    // Cheap pre-filter: every non-castling SAN names its destination square, so
+    // only moves landing there need the (comparatively costly) moveToSAN call.
+    const destMatch = san.match(/([a-h][1-8])(=[QRBN])?$/);
+    for (const move of getAllValidMoves(color)) {
+        if (destMatch) {
+            if (destMatch[1] !== FILE_NAMES[move.toX] + (8 - move.toY)) continue;
+        } else if (!move.details.isCastle) {
+            continue;
+        }
+        const isPromo = gameState[move.fromY][move.fromX].type === 'pawn' && (move.toY === 0 || move.toY === 7);
+        if (isPromo !== !!promo) continue;
+        if (moveToSAN(move.fromX, move.fromY, move.toX, move.toY, move.details, promo) === san) {
+            return { move, promo };
+        }
+    }
+    return null;
+}
+
+// Replays a SAN list from the initial position, recording repetition history as
+// it goes. Stops at the first unresolvable move; returns how many were applied.
+function replaySANFromStart(sanList) {
+    resetGame();
+    recordPosition();
+    let applied = 0;
+    for (const san of sanList) {
+        const resolved = resolveSAN(currentTurn, san);
+        if (!resolved) break;
+        applyMoveWithPromotion(resolved.move, resolved.promo);
+        recordPosition();
+        applied++;
+    }
+    return applied;
+}

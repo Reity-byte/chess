@@ -3,54 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Puzzle Trainer</title>
-    <link rel="stylesheet" href="game.css">
-    <script src="engine.js"   defer></script>
-    <script src="notation.js" defer></script>
-    <script src="puzzle-bank.js" defer></script>
-    <script src="puzzles-page.js" defer></script>
+    <title>Puzzles · Chess</title>
+    <link rel="stylesheet" href="../theme.css?v=7">
+    <link rel="stylesheet" href="game.css?v=7">
+    <script src="engine.js?v=7" defer></script>
+    <script src="notation.js?v=7" defer></script>
+    <script src="board-ui.js?v=7" defer></script>
+    <script src="puzzle-bank.js?v=7" defer></script>
+    <script src="puzzles-page.js?v=7" defer></script>
 </head>
-<body class="game-body">
+<body>
 
-    <div class="game-layout">
-
-        <!-- Board + status -->
-        <div class="board-column">
-            <div id="chessboard" class="board"></div>
-            <div id="puzzleCaption" class="move-caption">Loading puzzles...</div>
+    <header class="topbar">
+        <a class="brand" href="../site.html">
+            <span class="brand-mark"><span class="piece-icon white knight"></span></span>
+            <span class="brand-name">Chess</span>
+        </a>
+        <nav class="topnav">
+            <a href="game.html">Play</a>
+            <a href="analysis.html">Review</a>
+            <a href="puzzles.html" class="active">Puzzles</a>
+        </nav>
+        <div class="topbar-right">
+            <div class="board-theme-picker" aria-label="Board theme"></div>
         </div>
+    </header>
 
-        <!-- Right sidebar -->
-        <aside class="sidebar analysis-sidebar">
+    <main class="play-page">
+        <section class="board-area">
+            <div id="chessboard"></div>
+        </section>
 
-            <div class="puzzle-stats">
-                <div class="puzzle-stat">
-                    <span class="puzzle-stat-label">Rating</span>
-                    <strong id="puzzleRatingValue">1200</strong>
-                </div>
-                <div class="puzzle-stat">
-                    <span class="puzzle-stat-label">Streak</span>
-                    <strong id="puzzleStreakValue">0</strong>
-                </div>
-                <div class="puzzle-stat">
-                    <span class="puzzle-stat-label">Solved</span>
-                    <strong id="puzzleSolvedValue">0</strong>
+        <aside class="side">
+            <div class="panel">
+                <div class="stat-row">
+                    <div class="stat"><span class="eyebrow">Rating</span><strong id="puzzleRatingValue">1200</strong><span class="stat-delta" id="ratingDelta"></span></div>
+                    <div class="stat"><span class="eyebrow">Streak</span><strong id="puzzleStreakValue">0</strong><span class="stat-delta"></span></div>
+                    <div class="stat"><span class="eyebrow">Solved</span><strong id="puzzleSolvedValue">0</strong><span class="stat-delta"></span></div>
                 </div>
             </div>
 
-            <div id="puzzleResult" class="puzzle-result"></div>
-
-            <div class="game-buttons">
-                <button id="giveUpButton"   class="button cancel">Give Up</button>
-                <button id="nextPuzzleButton" class="button confirm hidden">Next Puzzle</button>
+            <div class="panel">
+                <div class="puzzle-prompt">
+                    <span class="turn-swatch white" id="turnSwatch"></span>
+                    <div>
+                        <div class="status-text" id="puzzleCaption">Loading puzzles…</div>
+                        <div class="status-sub" id="puzzleSub"></div>
+                    </div>
+                    <span class="chip" id="puzzleRatingChip" style="margin-left:auto" hidden></span>
+                </div>
+                <div class="puzzle-result" id="puzzleResult"></div>
+                <div class="panel-footer">
+                    <button id="hintButton" class="btn">💡 Hint</button>
+                    <button id="giveUpButton" class="btn">Show solution</button>
+                    <button id="nextPuzzleButton" class="btn btn-primary hidden" style="margin-left:auto">Next puzzle →</button>
+                </div>
             </div>
 
-            <div class="game-buttons">
-                <button id="homeButton" class="button cancel">Home</button>
+            <div class="panel">
+                <div class="panel-body muted" style="font-size:13px">
+                    Every position comes from a real game: the side to move can punish the
+                    previous move. Puzzles from your own reviewed games are added automatically.
+                </div>
             </div>
-
         </aside>
-    </div>
+    </main>
 
 </body>
 </html>

@@ -3,114 +3,127 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chess</title>
-    <link rel="stylesheet" href="site.css">
-    <script src="site-script.js" defer></script>
+    <title>Chess — play, review, train</title>
+    <link rel="stylesheet" href="theme.css?v=7">
+    <link rel="stylesheet" href="site.css?v=7">
+    <script src="site-script.js?v=7" defer></script>
 </head>
-<body class="site-body">
+<body>
 
-    <!-- ── NAV ──────────────────────────────────────────────────────── -->
-    <header class="site-nav">
-        <div class="nav-logo">
-            <span class="nav-logo-icon">♞</span>
-            <span>Chess</span>
-        </div>
-        <nav class="nav-links">
-            <a href="#modes">Play</a>
-            <a href="#engine">Engine</a>
-            <a href="#rules">Rules</a>
+    <header class="topbar">
+        <a class="brand" href="site.html">
+            <span class="brand-mark"><span class="piece-icon white knight"></span></span>
+            <span class="brand-name">Chess</span>
+        </a>
+        <nav class="topnav">
+            <a href="game/game.html">Play</a>
+            <a href="game/analysis.html">Review</a>
+            <a href="game/puzzles.html">Puzzles</a>
         </nav>
-        <button id="navPlayButton" class="button nav-play-button">Play Now</button>
+        <div class="topbar-right">
+            <button id="navPlayButton" class="btn btn-primary">Play now</button>
+        </div>
     </header>
 
-    <!-- ── HERO ─────────────────────────────────────────────────────── -->
+    <!-- ── HERO ─────────────────────────────────────────────────────────── -->
     <section class="hero">
         <div class="hero-text">
-            <h1 class="site-heading">Play Chess.<br>Anytime, Against Anyone.</h1>
-            <p class="site-text">A clean, fast chess board with a built-in engine — challenge the AI at
-                four strengths, or sit back and watch two engines battle it out.</p>
+            <span class="eyebrow hero-eyebrow">Play · Review · Train</span>
+            <h1>Play chess against a real engine.<br><span class="accent">Then learn from every move.</span></h1>
+            <p class="hero-sub">Face the built-in engine at four strengths, then get a full game review —
+                brilliant moves, blunders, accuracy and the best lines — and turn your own mistakes into puzzles.</p>
             <div class="hero-buttons">
-                <button id="resumeGameButton" class="button primary hidden">Resume Game</button>
-                <button id="startGameButton" class="button primary">Play vs AI</button>
-                <button id="watchAiButton" class="button secondary">Watch AI vs AI</button>
+                <button id="resumeGameButton" class="btn btn-primary btn-lg hidden">▶ Resume game</button>
+                <button id="startGameButton" class="btn btn-primary btn-lg">Play vs Engine</button>
+                <button id="watchAiButton" class="btn btn-lg">Watch Engine vs Engine</button>
             </div>
         </div>
 
-        <div class="hero-board" aria-hidden="true">
+        <figure class="hero-board-wrap" aria-label="Morphy's Opera Game: 16.Qb8+, a brilliant queen sacrifice">
             <div class="mini-board" id="miniBoard"></div>
-        </div>
+            <figcaption class="hero-caption">
+                <span class="caption-badge">!!</span>
+                <span><strong>16. Qb8+</strong> — Brilliant. Morphy's Opera Game, 1858</span>
+            </figcaption>
+        </figure>
     </section>
 
-    <!-- ── MODES ────────────────────────────────────────────────────── -->
+    <!-- ── MODES ────────────────────────────────────────────────────────── -->
     <section id="modes" class="section">
-        <h2 class="section-heading">Choose Your Game</h2>
         <div class="card-grid">
-            <div class="card">
-                <div class="card-icon">♟</div>
-                <h3>Play vs AI</h3>
-                <p>Pick your side — White, Black, or Random — and face the engine across four difficulty levels,
-                    from Beginner to Master.</p>
-                <button class="button primary card-button" data-play="human">Play Now</button>
-            </div>
-            <div class="card">
-                <div class="card-icon">⚔</div>
-                <h3>AI vs AI</h3>
-                <p>Watch two engine instances play each other in real time — great for seeing tactics and
-                    endgames unfold without lifting a finger.</p>
-                <button class="button secondary card-button" data-play="ai">Watch Now</button>
-            </div>
-            <div class="card">
-                <div class="card-icon">📜</div>
-                <h3>Full Move History</h3>
-                <p>Every game is recorded in proper algebraic notation (SAN) as you play, so you can review
-                    the whole game afterward.</p>
-                <button class="button secondary card-button" data-play="human">Try It</button>
-            </div>
-            <div class="card">
-                <div class="card-icon">🧩</div>
+            <a class="card" href="game/game.html?mode=human">
+                <span class="card-icon"><span class="piece-icon white king"></span></span>
+                <h3>Play the engine</h3>
+                <p>White, Black or random. Beginner to Master, with optional clocks, takebacks and draw offers.</p>
+                <span class="card-cta">Play now →</span>
+            </a>
+            <a class="card" href="game/analysis.html">
+                <span class="card-icon review">★</span>
+                <h3>Game Review</h3>
+                <p>Every move rated from Brilliant to Blunder, accuracy per side and phase, the best line, and an eval graph.</p>
+                <span class="card-cta">Review a game →</span>
+            </a>
+            <a class="card" href="game/puzzles.html">
+                <span class="card-icon puzzle">🧩</span>
                 <h3>Puzzle Trainer</h3>
-                <p>Find the punishing move in real blunders pulled from actual games, with a rating that
-                    adapts to your skill — the puzzle pool keeps growing every time a game gets analyzed.</p>
-                <button id="puzzlesButton" class="button secondary">Solve Puzzles</button>
-            </div>
+                <p>Punish real blunders. The pool grows from every game you review, with a rating that adapts to you.</p>
+                <span class="card-cta">Solve puzzles →</span>
+            </a>
+            <a class="card" href="game/game.html?mode=ai">
+                <span class="card-icon"><span class="piece-icon black queen"></span></span>
+                <h3>Engine vs Engine</h3>
+                <p>Sit back and watch two engines play it out — tactics, endgames and all.</p>
+                <span class="card-cta">Watch →</span>
+            </a>
         </div>
     </section>
 
-    <!-- ── ENGINE ───────────────────────────────────────────────────── -->
-    <section id="engine" class="section section-alt">
-        <h2 class="section-heading">Under the Hood</h2>
+    <!-- ── ENGINE ───────────────────────────────────────────────────────── -->
+    <section id="engine" class="section">
+        <div class="section-head">
+            <span class="eyebrow">Under the hood</span>
+            <h2>A real search engine, in plain JavaScript</h2>
+        </div>
         <div class="feature-grid">
             <div class="feature">
-                <h4>Negamax + Alpha-Beta</h4>
-                <p>Depth-limited search with alpha-beta pruning cuts away branches that can't affect the result.</p>
+                <h4>Fast search board</h4>
+                <p>A compact 0x88 typed-array board with integer moves and incremental Zobrist hashing — no allocations in the hot path.</p>
             </div>
             <div class="feature">
-                <h4>Iterative Deepening</h4>
-                <p>The engine searches progressively deeper within its time budget, always keeping the best move found so far.</p>
+                <h4>Principal variation search</h4>
+                <p>Alpha-beta with PVS, null-move pruning, late move reductions, check extensions and mate-distance pruning.</p>
             </div>
             <div class="feature">
-                <h4>Quiescence Search</h4>
-                <p>Capture sequences are played out past the search horizon to avoid misjudging tactical positions.</p>
+                <h4>Tactics-aware quiescence</h4>
+                <p>Captures are resolved past the horizon; static exchange evaluation skips losing ones and orders the rest.</p>
             </div>
             <div class="feature">
-                <h4>Transposition Table</h4>
-                <p>Positions reached via different move orders are cached, so the engine never re-analyzes the same board twice.</p>
+                <h4>Persistent transposition table</h4>
+                <p>A typed-array hash table that survives between moves, so every search starts with what the last one learned.</p>
+            </div>
+            <div class="feature">
+                <h4>Never freezes the page</h4>
+                <p>The engine and the game review run in Web Workers — clocks tick and pieces animate while it thinks.</p>
+            </div>
+            <div class="feature">
+                <h4>Honest game review</h4>
+                <p>Each position is searched once with multi-PV, scoring the played move in the same search as the best one.</p>
             </div>
         </div>
     </section>
 
-    <!-- ── RULES / DRAWS ────────────────────────────────────────────── -->
+    <!-- ── RULES ────────────────────────────────────────────────────────── -->
     <section id="rules" class="section">
-        <h2 class="section-heading">Full Rule Support</h2>
         <ul class="rules-list">
-            <li>Castling (kingside &amp; queenside), en passant, and pawn promotion</li>
-            <li>Check, checkmate, and stalemate detection</li>
-            <li>Draws by threefold repetition, the 50-move rule, and insufficient material</li>
+            <li>Castling, en passant and every promotion</li>
+            <li>Check, checkmate and stalemate</li>
+            <li>Threefold repetition, 50-move rule, insufficient material</li>
+            <li>PGN import and export</li>
         </ul>
     </section>
 
     <footer class="site-footer">
-        <p>Built with vanilla JavaScript — no frameworks, no backend.</p>
+        Built with vanilla JavaScript — no frameworks, no backend.
     </footer>
 
 </body>
