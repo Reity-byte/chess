@@ -124,7 +124,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=10');
+            this.worker = new Worker('ai-worker.js?v=12');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -182,7 +182,6 @@ const engineClient = {
 
 // ─── SETUP ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    initBoardThemePicker();
 
     board = new BoardView(document.getElementById('chessboard'), {
         canSelect: (x, y) => isHumanTurn() && !aiThinking && !!gameState[y][x] && gameState[y][x].color === currentTurn,

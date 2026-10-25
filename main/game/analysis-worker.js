@@ -11,12 +11,15 @@
 // comparing two searches of different depth. The next position's search then
 // supplies the eval graph point after the move and the opponent's best reply
 // (the "punish" move for puzzles). Results stream back move by move.
-importScripts('engine.js?v=10', 'ai.js?v=10', 'notation.js?v=10', 'openings.js?v=10', 'analysis.js?v=10');
+importScripts('engine.js?v=12', 'ai.js?v=12', 'notation.js?v=12', 'openings.js?v=12', 'analysis.js?v=12');
 
-// "What if" exploration always searches at full strength, whatever difficulty
-// the original game was played at.
-const EXPLORE_TIME_MS = 1200;
-const EXPLORE_DEPTH = 20;
+// Single moves judged on the review page (variations, retries) and the live
+// engine panel always search at full strength, whatever level the game was
+// played at.
+const JUDGE_MODE = { timeMs: 700, maxDepth: 20 };
+const LIVE_LINES = 3;
+const LIVE_MAX_MS = 20000;
+const LIVE_MAX_DEPTH = 30;
 const SACRIFICE_MIN = 150;     // net material given up (cp) to count as a sacrifice
 const SACRIFICE_CONFIRM_PLIES = 2; // best-line plies played out to check the material stays given up
 const ALREADY_WINNING = 97;    // win% above which a non-mating sacrifice isn't "brilliant" anymore
@@ -369,7 +372,7 @@ function resolveGame(sanMoves) {
 // startEval)` (startEval only known to the range that starts at 0). Entries
 // carry `inputs`, the classification facts finalizeReport() re-classifies from.
 function analyzeRange(sanMoves, from, to, modeKey, onMove) {
-    const mode = ANALYSIS_MODES[modeKey] || ANALYSIS_MODES.standard;
+    const mode = typeof modeKey === 'object' ? modeKey : ANALYSIS_MODES[modeKey] || ANALYSIS_MODES.standard;
     const opening = identifyOpening(sanMoves, OPENING_BOOK.map(l => l.moves));
     const resolved = resolveGame(sanMoves);
     to = Math.min(to, resolved.length);
@@ -496,71 +499,46 @@ function round1(v) { return Math.round(v * 10) / 10; }
 function clampCp(v) { return Math.max(-3000, Math.min(3000, v)); }
 
 // ─── JUDGING A SINGLE MOVE ─────────────────────────────────────────────────────
-// Rates `move` in the current position the same way a game move is rated
-// (without book/sacrifice context). Leaves the board unchanged.
-function judgeCurrentMove(move) {
-    const mode = { timeMs: EXPLORE_TIME_MS / 2, maxDepth: EXPLORE_DEPTH };
-    const before = searchPosition(mode, { move, promo: move.promo || null });
-    const best = before.lines[0];
-    const isBest = !!best && sameMove(best.move, move) && (best.move.promo || null) === (move.promo || best.move.promo || null);
-    const winBest = winProbability(before.score);
-    const winPlayed = winProbability(isBest ? before.score : before.includedScore);
-    const winLoss = Math.max(0, winBest - winPlayed);
-    const second = before.lines[1];
-    const category = classify({
-        legalCount: before.legalCount, inBook: false, isBest, winBest, winPlayed, winLoss,
-        winSecond: second ? winProbability(second.score) : null,
-        sacrifice: 0, prevLoss: 0, isRecapture: false,
-        deliversMate: isBest && before.score === EVAL_MATE - 1,
-    });
-    const sign = currentTurn === 'white' ? 1 : -1;
-    return {
-        category, winLoss: round1(winLoss),
-        bestSan: isBest || !best ? null : best.san,
-        bestMove: best ? best.move : null,
-        bestLine: before.pv,
-        evalWhite: sign * (isBest ? before.score : before.includedScore),
-    };
+// Rates the move `san` in the position after `sanMoves` exactly like a game
+// move — category, reason, better move and lines — by analyzing it as a
+// one-move range. Used for the review page's own variations and for "Retry
+// mistakes". Returns the analysis entry (evalAfter etc. from White's view).
+function runJudgeMove(sanMoves, san) {
+    const all = sanMoves.concat([san]);
+    const { entries } = analyzeRange(all, sanMoves.length, all.length, JUDGE_MODE, () => {});
+    return entries[0];
 }
 
-// "Retry mistakes": rate a replacement move in the position after `sanMoves`.
-function runJudge(sanMoves, move) {
+// ─── LIVE ANALYSIS ─────────────────────────────────────────────────────────────
+// The review page's engine panel: searches the position after `sanMoves`
+// deeper and deeper (top LIVE_LINES moves) and posts every finished depth.
+// The page terminates this worker when the position changes, which is the
+// only way to interrupt a search.
+function runLive(sanMoves, requestId, maxMs = LIVE_MAX_MS) {
     replaySANFromStart(sanMoves);
-    return judgeCurrentMove(move);
-}
-
-// ─── "WHAT IF" EXPLORATION ─────────────────────────────────────────────────────
-// Replays the game up to the branch point plus the variation so far. The last
-// variation move (the user's) is judged against the engine's choice in that
-// position, then the engine searches its reply.
-function runExplore(sanMoves, variationMoves) {
-    replaySANFromStart(sanMoves);
-    const earlier = variationMoves.slice(0, -1);
-    for (const vm of earlier) { applyMoveWithPromotion(vm, vm.promo); recordPosition(); }
-
-    let userVerdict = null;
-    const userMove = variationMoves[variationMoves.length - 1];
-    if (userMove) {
-        const v = judgeCurrentMove(userMove);
-        userVerdict = { category: v.category, bestSan: v.bestSan };
-        applyMoveWithPromotion(userMove, userMove.promo);
-        recordPosition();
+    const color = currentTurn, sign = color === 'white' ? 1 : -1;
+    const post = (fields) => self.postMessage({ type: 'live', requestId, ...fields });
+    const status = getGameStatus();
+    if (status) {
+        const evalWhite = status.result === '1-0' ? EVAL_MATE : status.result === '0-1' ? -EVAL_MATE : 0;
+        post({ depth: 0, lines: [], evalWhite, terminal: status.message, done: true });
+        return;
     }
-
-    const color = currentTurn;
-    const reply = searchPosition({ timeMs: EXPLORE_TIME_MS, maxDepth: EXPLORE_DEPTH }, null);
-    if (reply.terminal) {
-        return { userVerdict, move: null, san: null, evalWhite: color === 'white' ? reply.score : -reply.score, pv: [] };
+    const started = Date.now();
+    let reached = 0;
+    for (let depth = 1; depth <= LIVE_MAX_DEPTH; depth++) {
+        const left = maxMs - (Date.now() - started);
+        if (left <= 0) break;
+        const r = searchRoot(color, { timeMs: left, maxDepth: depth, multiPV: LIVE_LINES, contempt: 0, withLines: true, searchForced: true });
+        if (r.depth <= reached) break; // out of time before this depth finished
+        reached = r.depth;
+        const lines = r.lines.slice(0, LIVE_LINES).map(l => ({
+            move: plainMove(l.move, l.promo), san: l.san, pv: l.pv || [l.san], evalWhite: sign * l.score,
+        }));
+        post({ depth: r.depth, lines, evalWhite: lines.length ? lines[0].evalWhite : 0 });
+        if (lines.length && Math.abs(lines[0].evalWhite) >= EVAL_MATE_BOUND) break; // a forced mate won't change
     }
-    const top = reply.lines[0];
-    return {
-        userVerdict,
-        move: top.move,
-        san: top.san,
-        evalWhite: color === 'white' ? reply.score : -reply.score,
-        pv: reply.pv,
-        depth: reply.depth,
-    };
+    post({ done: true, depth: reached });
 }
 
 self.onmessage = function (e) {
@@ -580,14 +558,13 @@ self.onmessage = function (e) {
         } else if (data.type === 'finalize') {
             const report = finalizeReport(data.entries, data.startEval, data.sanMoves, data.mode || 'standard');
             self.postMessage({ type: 'done', report });
-        } else if (data.type === 'explore') {
-            const result = runExplore(data.sanMoves, data.variationMoves);
-            self.postMessage({ type: 'exploreReply', result, requestId: data.requestId });
-        } else if (data.type === 'judge') {
-            const result = runJudge(data.sanMoves, data.move);
-            self.postMessage({ type: 'judgeReply', result, requestId: data.requestId });
+        } else if (data.type === 'judgeMove') {
+            const entry = runJudgeMove(data.sanMoves, data.san);
+            self.postMessage({ type: 'judgeReply', entry, requestId: data.requestId });
+        } else if (data.type === 'live') {
+            runLive(data.sanMoves, data.requestId, data.maxMs);
         }
     } catch (err) {
-        self.postMessage({ type: 'error', message: err.message, requestType: data.type });
+        self.postMessage({ type: 'error', message: err.message, requestType: data.type, requestId: data.requestId });
     }
 };

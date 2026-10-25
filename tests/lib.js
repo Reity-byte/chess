@@ -38,7 +38,9 @@ function loadAnalysisWorker(dir = GAME_DIR) {
     return {
         run: (code) => vm.runInContext(code, ctx),
         analyze: (sanMoves, mode = 'standard') => send({ type: 'analyze', sanMoves, mode }).find(m => m.type === 'done').report,
-        judge: (sanMoves, move) => send({ type: 'judge', sanMoves, move }).find(m => m.type === 'judgeReply').result,
+        judgeMove: (sanMoves, san) => send({ type: 'judgeMove', sanMoves, san }).find(m => m.type === 'judgeReply').entry,
+        // Live engine panel: every update it posts (each finished depth, then done).
+        live: (sanMoves, maxMs = 2000) => send({ type: 'live', sanMoves, requestId: 1, maxMs }).filter(m => m.type === 'live'),
         // The review page's parallel path, run sequentially: fixed-size ranges
         // (deliberately processed out of order), then the finalize step.
         analyzeInRanges: (sanMoves, mode = 'standard', rangeSize = 5) => {

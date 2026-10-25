@@ -69,11 +69,26 @@ t.check(forks.includes('queen') && forks.includes('rook'), `knight on f7 forks q
 const fried = worker.analyze('e4 e5 Nf3 Nc6 Bc4 Nf6 Ng5 d5 exd5 Nxd5 Nxf7'.split(' '), mode);
 t.check(at(fried, 'Nxf7').category === 'Book' && !at(fried, 'Nxf7').reason, `book sacrifice 6.Nxf7 not "explained" (${at(fried, 'Nxf7').reason})`);
 
-// ── Judging single moves (used by "Retry mistakes") ───────────────────────────
+// ── Judging single moves (review-page variations, "Retry mistakes") ───────────
 console.log('\nJudge');
-const mate = worker.judge(['f3', 'e5', 'g4'], { fromX: 3, fromY: 0, toX: 7, toY: 4, details: { x: 7, y: 4 } });
+const mate = worker.judgeMove(['f3', 'e5', 'g4'], 'Qh4#');
 t.check(mate.category === 'Best', `Qh4# judged Best (${mate.category})`);
-const quiet = worker.judge(['f3', 'e5', 'g4'], { fromX: 0, fromY: 1, toX: 0, toY: 2, details: { x: 0, y: 2 } });
-t.check(ERRORS.includes(quiet.category) && quiet.bestSan === 'Qh4#', `...a6 judged an error, best Qh4# (${quiet.category}, best ${quiet.bestSan})`);
+const quiet = worker.judgeMove(['f3', 'e5', 'g4'], 'a6');
+t.check(ERRORS.includes(quiet.category) && quiet.bestMove && quiet.bestMove.san === 'Qh4#' && quiet.motif === 'missedMate',
+    `...a6 judged an error, best Qh4#, missed mate (${quiet.category}, best ${quiet.bestMove && quiet.bestMove.san}, "${quiet.reason}")`);
+const hangs = worker.judgeMove(['e4', 'e5', 'Qh5', 'Nc6'], 'Qxe5+');
+t.check(hangs.motif === 'hangs', `3.Qxe5+ judged with a reason: "${hangs.reason}"`);
+
+// ── Live engine panel ─────────────────────────────────────────────────────────
+console.log('\nLive analysis');
+const updates = worker.live(['f3', 'e5', 'g4']);
+const last = updates.filter(u => u.lines && u.lines.length).pop();
+t.check(updates.length >= 2 && updates[updates.length - 1].done, `posts each depth, then done (${updates.length} updates)`);
+t.check(last.lines[0].san === 'Qh4#' && last.evalWhite <= -99000, `finds Qh4# with a mate score (${last.lines[0].san}, ${last.evalWhite})`);
+const opening = worker.live(['e4', 'e5']).filter(u => u.lines && u.lines.length).pop();
+t.check(opening.lines.length === 3 && opening.lines.every(l => l.pv.length >= 1 && l.pv[0] === l.san),
+    `three lines, each with its own continuation (${opening.lines.map(l => l.pv.slice(0, 3).join(' ')).join(' | ')})`);
+const over = worker.live(['f3', 'e5', 'g4', 'Qh4#']);
+t.check(over.length === 1 && over[0].terminal && over[0].done, `finished game reported as over: "${over[0].terminal}"`);
 
 t.done('analysis');

@@ -35,7 +35,6 @@ function save(key, value) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    initBoardThemePicker();
     board = new BoardView($('chessboard'), {
         canSelect: (x, y) => !!currentPuzzle && !puzzleDone && !!gameState[y][x] && gameState[y][x].color === currentTurn,
         legalMoves: (x, y) => getvalidMoves(x, y),

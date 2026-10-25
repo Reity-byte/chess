@@ -4,14 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Review · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=10">
-    <link rel="stylesheet" href="game.css?v=10">
-    <script src="engine.js?v=10" defer></script>
-    <script src="notation.js?v=10" defer></script>
-    <script src="analysis.js?v=10" defer></script>
-    <script src="board-ui.js?v=10" defer></script>
-    <script src="history-store.js?v=10" defer></script>
-    <script src="analysis-page.js?v=10" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=12">
+    <link rel="stylesheet" href="../pieces.css?v=12">
+    <script src="../style-settings.js?v=12"></script>
+    <link rel="stylesheet" href="game.css?v=12">
+    <script src="engine.js?v=12" defer></script>
+    <script src="notation.js?v=12" defer></script>
+    <script src="analysis.js?v=12" defer></script>
+    <script src="board-ui.js?v=12" defer></script>
+    <script src="history-store.js?v=12" defer></script>
+    <script src="analysis-page.js?v=12" defer></script>
 </head>
 <body>
 
@@ -27,7 +29,6 @@
             <a href="history.html">History</a>
         </nav>
         <div class="topbar-right">
-            <div class="board-theme-picker" aria-label="Board theme"></div>
         </div>
     </header>
 
@@ -64,22 +65,12 @@
 
         <aside class="side">
             <div id="variationBanner" class="banner hidden">
-                <span>Exploring a variation — not part of the game</span>
+                <span>Your own line — the game itself is unchanged</span>
                 <button id="backToGameButton" class="btn">Back to game</button>
             </div>
             <div id="puzzleBanner" class="banner puzzle hidden">
                 <span id="puzzleBannerText">Find the move that punishes it!</span>
                 <button id="exitPuzzleButton" class="btn">Exit</button>
-            </div>
-
-            <div id="retryBanner" class="banner puzzle retry-banner hidden">
-                <span id="retryText">Retry</span>
-                <div class="retry-actions">
-                    <button id="retryHintButton" class="btn">Hint</button>
-                    <button id="retrySolutionButton" class="btn">Solution</button>
-                    <button id="retryNextButton" class="btn btn-primary">Next →</button>
-                    <button id="retryExitButton" class="btn">Exit</button>
-                </div>
             </div>
 
             <div class="panel caption-card" id="captionCard">
@@ -90,6 +81,33 @@
                     <div class="caption-line" id="captionLine2"></div>
                     <button id="tryPuzzleButton" class="btn hidden" style="margin-top:10px; height:34px">🧩 Practice this moment</button>
                 </div>
+            </div>
+
+            <div class="panel retry-panel hidden" id="retryPanel">
+                <div class="retry-head">
+                    <div>
+                        <div class="eyebrow">Fix your mistakes</div>
+                        <div class="retry-counter" id="retryCounter">1 / 1</div>
+                    </div>
+                    <button id="retryExitButton" class="btn btn-ghost btn-icon" title="Back to the review (Esc)" aria-label="Exit retry">✕</button>
+                </div>
+                <div class="retry-dots" id="retryDots"></div>
+                <div class="retry-body">
+                    <div class="retry-task" id="retryTask"></div>
+                    <div class="retry-what" id="retryWhat"></div>
+                    <div class="retry-feedback hidden" id="retryFeedback"></div>
+                </div>
+                <div class="retry-actions" id="retryActions"></div>
+            </div>
+
+            <div class="panel engine-panel" id="enginePanel">
+                <div class="panel-header">
+                    <label class="engine-toggle"><input type="checkbox" class="switch" id="liveToggle" checked> Engine</label>
+                    <span class="eval-pill hidden" id="liveEval"></span>
+                    <span class="muted" id="liveDepth"></span>
+                    <span class="muted engine-keys" title="Play the engine's move">Space ▶</span>
+                </div>
+                <div class="engine-lines" id="liveLines"></div>
             </div>
 
             <div class="panel" id="summaryPanel">
@@ -132,7 +150,7 @@
             </div>
 
             <div class="panel moves-panel">
-                <div class="panel-header">Moves <span class="muted" id="movesHint">← → to step</span></div>
+                <div class="panel-header">Moves <span class="muted" id="movesHint">← → to step · move pieces to try your own lines</span></div>
                 <div class="moves-scroll" id="movesScroll">
                     <div class="moves-grid" id="movesGrid"></div>
                     <div class="moves-empty hidden" id="movesEmpty">No game loaded.</div>

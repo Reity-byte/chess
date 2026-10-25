@@ -1053,8 +1053,9 @@ function extractPV(first, maxLen) {
 //                      (the move actually played, for the Game Analysis Engine)
 //   contempt         – draw contempt (default CONTEMPT)
 //   searchForced     – still search when only one legal move exists
-//   withLines        – also return SAN for the scored lines and the PV
-// Returns { move, promo, score, depth, nodes, lines:[{move,promo,san,score}],
+//   withLines        – also return SAN and the line (pv) for each scored move,
+//                      and the chosen move's PV
+// Returns { move, promo, score, depth, nodes, lines:[{move,promo,san,score,pv}],
 // includedScore, pv:[san] } — scores from the mover's view, mates ±(MATE-plies).
 const GLANCE_NOTICE = 0.6;
 
@@ -1183,7 +1184,10 @@ function searchRoot(color, opts = {}) {
     const lineEntries = entries.filter(e => e.exact).slice(0, opts.withLines ? multiPV : entries.length);
     return {
         move: g.move, promo: g.promo, score: chosen.score, depth: completedDepth, nodes: nodeCount,
-        lines: lineEntries.map(e => ({ ...toGameMove(e.m, gameMoves), san: opts.withLines ? sbSAN(e.m) : null, score: e.score })),
+        lines: lineEntries.map(e => ({
+            ...toGameMove(e.m, gameMoves), san: opts.withLines ? sbSAN(e.m) : null, score: e.score,
+            pv: opts.withLines ? extractPV(e.m, Math.max(1, Math.min(completedDepth, 12))) : null,
+        })),
         includedScore: included ? included.score : null,
         pv: opts.withLines ? extractPV(chosen.m, Math.max(1, Math.min(completedDepth, 12))) : [],
     };

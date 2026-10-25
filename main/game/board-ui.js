@@ -8,41 +8,7 @@
 // layout work per frame) and are diffed against the previous render, so a
 // piece that moved slides to its new square even when the caller rebuilt the
 // whole position from scratch (e.g. stepping through a game in the review).
-
-const BOARD_THEMES = {
-    green: 'Green',
-    brown: 'Wood',
-    blue:  'Ice',
-    slate: 'Slate',
-};
-const BOARD_THEME_KEY = 'chessBoardTheme';
-
-function applyBoardTheme(name) {
-    const theme = BOARD_THEMES[name] ? name : 'green';
-    document.documentElement.dataset.board = theme;
-    try { localStorage.setItem(BOARD_THEME_KEY, theme); } catch (e) { /* storage unavailable */ }
-    document.querySelectorAll('.theme-swatch').forEach(s => s.classList.toggle('active', s.dataset.theme === theme));
-}
-
-// Fills every `.board-theme-picker` element with clickable swatches.
-function initBoardThemePicker() {
-    let saved = 'green';
-    try { saved = localStorage.getItem(BOARD_THEME_KEY) || 'green'; } catch (e) { /* default */ }
-    document.querySelectorAll('.board-theme-picker').forEach(picker => {
-        picker.innerHTML = '';
-        for (const [key, label] of Object.entries(BOARD_THEMES)) {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'theme-swatch';
-            b.dataset.theme = key;
-            b.title = `${label} board`;
-            b.setAttribute('aria-label', `${label} board`);
-            b.addEventListener('click', () => applyBoardTheme(key));
-            picker.appendChild(b);
-        }
-    });
-    applyBoardTheme(saved);
-}
+// Its look (piece set, board colors) comes from style-settings.js.
 
 const PROMOTION_CHOICES = ['queen', 'knight', 'rook', 'bishop'];
 

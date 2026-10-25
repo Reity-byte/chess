@@ -1037,6 +1037,36 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 🎨 Session 25 — Style panel, analysis board, clearer Retry
+
+- **Style panel** (`main/style-settings.js`, loaded un-deferred in every `<head>` so there's no flash):
+  a "Style" button in every top bar opens a modal with a live 4×4 preview, 10 piece sets, 8 board
+  colors, and toggles for coordinates, move animations, legal-move dots and sound. Saved as
+  `chessStyle` (old `chessBoardTheme` migrated) and applied as `<html data-pieces / data-board /
+  data-coords / data-anim / data-hints>`. Board theme code moved out of board-ui.js.
+- **Piece sets:** original pixel PNGs (default) + 9 SVG sets from lichess (cburnett, merida, california,
+  staunty, cardinal, maestro, fantasy, celtic, spatial) in `main/game/pieces/<set>/`; licenses in
+  `main/game/pieces/CREDITS.md` (4 are CC BY-NC-SA: non-commercial only). `main/pieces.css` is
+  generated (one rule per piece; `.set-sample[data-pieces]` rules let each preview show its own set).
+- **Review board was never interactive** (no `setInteractive(true)`), so "what if" moves were
+  impossible by mouse — fixed. The review page is now an analysis board: free moves for both sides,
+  variations kept as a tree in the move list (`variations` + `cursor` nodes; nested lines in
+  parentheses; × deletes), each player move rated in the background by a dedicated judge worker
+  (`judgeMove` = `analyzeRange` on one move, so category + reason + better move, same as game moves).
+- **Live engine panel:** its own worker (`runLive`) searches the shown position deeper and deeper,
+  posting the top 3 lines per depth (`searchRoot` now returns a `pv` per line); replaced when the
+  position changes (150 ms debounce), off while the review runs. Blue arrow = live best move; click any
+  move in a line to play up to it; Space plays the engine's move. Toggle persisted (`chessLiveEngine`).
+- **Retry mistakes rebuilt** as a panel: progress dots, the task, a clue that doesn't give the answer
+  (`retryClue`), the game move as a red arrow; wrong tries show the reason and the refuting reply (red
+  arrow) with Try again; solved/shown items offer "Explore this position" (continues on the analysis
+  board with the fix as a variation); a finish screen offers retrying the missed ones. Only the
+  player's own mistakes when either side is "You" — now also for names like "You (934)" from PGNs.
+- Worker messages: `explore`/`judge` replaced by `judgeMove` and `live`; errors carry `requestId`.
+  Tests cover both. Cache version `?v=12`.
+
+---
+
 ## Paste this into a new session to continue:
 
 ```
@@ -1044,7 +1074,8 @@ I have a vanilla JS chess site:
   main/theme.css                            (shared design tokens + components for every page)
   main/site.html, site.css, site-script.js  (landing page)
   main/game/game.html, game-script.js, game.css   (live game; game.css also styles review/puzzles)
-  main/game/board-ui.js   (BoardView: rendering, drag/click input, arrows, badges, themes, toasts)
+  main/style-settings.js, pieces.css         (Style panel: piece sets, board colors, options)
+  main/game/board-ui.js   (BoardView: rendering, drag/click input, arrows, badges, toasts)
   main/game/engine.js     (rules, move gen, Zobrist keys, getGameStatus)
   main/game/ai.js         (0x88 search board + PVS search; searchRoot()/findBestMove())
   main/game/strength.js   (calibrated engine strength ladder; tests/calibrate.js measures it)
