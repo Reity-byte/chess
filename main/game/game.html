@@ -4,19 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Play · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=12">
-    <link rel="stylesheet" href="../pieces.css?v=12">
-    <script src="../style-settings.js?v=12"></script>
-    <link rel="stylesheet" href="game.css?v=12">
-    <script src="engine.js?v=12" defer></script>
-    <script src="ai.js?v=12" defer></script>
-    <script src="notation.js?v=12" defer></script>
-    <script src="openings.js?v=12" defer></script>
-    <script src="strength.js?v=12" defer></script>
-    <script src="sound.js?v=12" defer></script>
-    <script src="board-ui.js?v=12" defer></script>
-    <script src="history-store.js?v=12" defer></script>
-    <script src="game-script.js?v=12" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=16">
+    <link rel="stylesheet" href="../pieces.css?v=16">
+    <script src="../style-settings.js?v=16"></script>
+    <link rel="stylesheet" href="game.css?v=16">
+    <script src="engine.js?v=16" defer></script>
+    <script src="ai.js?v=16" defer></script>
+    <script src="notation.js?v=16" defer></script>
+    <script src="openings.js?v=16" defer></script>
+    <script src="strength.js?v=16" defer></script>
+    <script src="sound.js?v=16" defer></script>
+    <script src="board-ui.js?v=16" defer></script>
+    <script src="analysis.js?v=16" defer></script>
+    <script src="history-store.js?v=16" defer></script>
+    <script src="review-runner.js?v=16" defer></script>
+    <script src="game-script.js?v=16" defer></script>
 </head>
 <body>
 
@@ -143,7 +145,8 @@
 
     <!-- ── GAME OVER ─────────────────────────────────────────────────────── -->
     <div id="gameOverModal" class="modal-overlay hidden">
-        <div class="modal">
+        <div class="modal game-over-card" role="dialog" aria-modal="true" aria-labelledby="gameOverTitle">
+            <button id="closeModalButton" class="btn btn-ghost btn-icon modal-close" title="Close — look at the final position" aria-label="Close">✕</button>
             <h2 id="gameOverTitle">Game over</h2>
             <p class="modal-sub" id="gameOverReason"></p>
             <div class="result-banner">
@@ -151,12 +154,33 @@
                 <span class="muted" id="gameOverMoves"></span>
                 <span class="rating-change" id="gameOverRating"></span>
             </div>
+
+            <!-- Filled in by the Quick review that starts when the game ends. -->
+            <div class="go-preview" id="previewBox">
+                <div class="go-loading" id="previewLoading">
+                    <div class="progress-track"><div class="progress-fill" id="previewFill"></div></div>
+                    <span id="previewText">Reviewing your game…</span>
+                </div>
+                <div class="go-ready hidden" id="previewReady">
+                    <div class="go-acc">
+                        <div class="go-acc-side"><span class="acc-value white" id="previewAccWhite">–</span><span class="acc-label" id="previewNameWhite">White</span></div>
+                        <span class="eyebrow">Accuracy</span>
+                        <div class="go-acc-side"><span class="acc-value black" id="previewAccBlack">–</span><span class="acc-label" id="previewNameBlack">Black</span></div>
+                    </div>
+                    <div class="go-grades" id="previewGrades"></div>
+                    <div class="go-moment hidden" id="previewMoment"></div>
+                </div>
+            </div>
+
             <div class="modal-actions">
                 <button id="reportButton" class="btn btn-primary btn-lg btn-block">★ Game Review</button>
+                <button id="rematchButton" class="btn">↻ Rematch</button>
                 <button id="restartButton" class="btn">New game</button>
-                <button id="copyPgnButtonModal" class="btn">Copy PGN</button>
-                <button id="pgnButtonModal" class="btn">Download PGN</button>
-                <button id="closeModalButton" class="btn btn-ghost">Close</button>
+            </div>
+            <div class="go-links">
+                <button id="copyPgnButtonModal" class="link-button">Copy PGN</button>
+                <span class="faint">·</span>
+                <button id="pgnButtonModal" class="link-button">Download PGN</button>
             </div>
         </div>
     </div>

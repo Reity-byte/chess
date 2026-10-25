@@ -490,3 +490,39 @@ function pieceIcon(color, type) {
     s.className = `piece-icon ${color} ${type}`;
     return s;
 }
+
+// ─── CAPTURED MATERIAL ─────────────────────────────────────────────────────────
+// Fills `el` with the pieces `color` has taken (the opponent's pieces missing
+// from `board`) and its material lead in points, as shown under a player's name.
+const START_COUNTS = { pawn: 8, knight: 2, bishop: 2, rook: 2, queen: 1 };
+const CAPTURE_ORDER = ['queen', 'rook', 'bishop', 'knight', 'pawn'];
+const MATERIAL_POINTS = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9 };
+
+function renderCaptured(el, color, board = gameState) {
+    const enemy = color === 'white' ? 'black' : 'white';
+    const counts = { white: {}, black: {} };
+    const points = { white: 0, black: 0 };
+    for (const row of board) {
+        for (const p of row) {
+            if (!p || p.type === 'king') continue;
+            counts[p.color][p.type] = (counts[p.color][p.type] || 0) + 1;
+            points[p.color] += MATERIAL_POINTS[p.type];
+        }
+    }
+    el.innerHTML = '';
+    for (const type of CAPTURE_ORDER) {
+        const missing = Math.max(0, START_COUNTS[type] - (counts[enemy][type] || 0));
+        if (!missing) continue;
+        const group = document.createElement('span');
+        group.className = 'group';
+        for (let i = 0; i < missing; i++) group.appendChild(pieceIcon(enemy, type));
+        el.appendChild(group);
+    }
+    const lead = points[color] - points[enemy];
+    if (lead > 0) {
+        const d = document.createElement('span');
+        d.className = 'material-diff';
+        d.textContent = `+${lead}`;
+        el.appendChild(d);
+    }
+}

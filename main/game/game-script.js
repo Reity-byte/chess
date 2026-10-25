@@ -124,7 +124,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=12');
+            this.worker = new Worker('ai-worker.js?v=16');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -216,7 +216,9 @@ document.addEventListener('DOMContentLoaded', () => {
     $('cancelSetupButton').addEventListener('click', () => setupModal.classList.add('hidden'));
     $('newGameButton').addEventListener('click', openSetup);
     $('restartButton').addEventListener('click', () => { $('gameOverModal').classList.add('hidden'); openSetup(); });
+    $('rematchButton').addEventListener('click', () => { $('gameOverModal').classList.add('hidden'); rematch(); });
     $('closeModalButton').addEventListener('click', () => $('gameOverModal').classList.add('hidden'));
+    $('gameOverModal').addEventListener('click', (e) => { if (e.target === $('gameOverModal')) $('gameOverModal').classList.add('hidden'); });
     $('reportButton').addEventListener('click', openReview);
     $('flipButton').addEventListener('click', () => { isFlipped = !isFlipped; board.setFlipped(isFlipped); updatePlayers(); });
     $('pgnButton').addEventListener('click', downloadPGN);
@@ -306,6 +308,7 @@ function openSetup() {
 // `resumeData` (from saveInProgressGame) replays a previously saved game.
 function startGame(resumeData) {
     gameToken++;
+    cancelGamePreview();
     engineClient.newGame();
     stopClock();
 
@@ -480,12 +483,22 @@ function endGame(status) {
     updatePlayers();
     updateStatus(status);
     updateClockDisplay();
+    startGamePreview(sans);
     setTimeout(() => showGameOverModal(status), 450);
 }
 
+// Same settings again with colors swapped (vs the engine), or the two engines'
+// levels swapped (engine vs engine).
+function rematch() {
+    const human = gameMode === 'human';
+    const color = human ? other(playerColor) : 'white';
+    const levels = human
+        ? { white: null, black: null, [other(color)]: engineLevels[other(playerColor)] }
+        : { white: engineLevels.black, black: engineLevels.white };
+    startGame({ gameMode, playerColor: color, selectedTimeControl: timeControl, engineLevels: levels, rated: human, moveHistory: [], clock: null });
+}
+
 // ─── PLAYERS, CAPTURES, STATUS ─────────────────────────────────────────────────
-const START_COUNTS = { pawn: 8, knight: 2, bishop: 2, rook: 2, queen: 1 };
-const CAPTURE_ORDER = ['queen', 'rook', 'bishop', 'knight', 'pawn'];
 
 // Display name (the rating is shown next to it); 'You' must stay exactly that,
 // the review page uses it to orient the board and pick whose mistakes to retry.
@@ -508,38 +521,11 @@ function fullPlayerName(color) {
 function updatePlayers() {
     const topColor = isFlipped ? 'white' : 'black';
     const bottomColor = other(topColor);
-    const counts = { white: {}, black: {} };
-    const material = { white: 0, black: 0 };
-    for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-            const p = gameState[y][x];
-            if (!p || p.type === 'king') continue;
-            counts[p.color][p.type] = (counts[p.color][p.type] || 0) + 1;
-            material[p.color] += PIECE_VALUES[p.type];
-        }
-    }
     const fill = (prefix, color) => {
         document.getElementById(prefix + 'Name').textContent = playerLabel(color);
         document.getElementById(prefix + 'Rating').textContent = playerRatingLabel(color);
         document.getElementById(prefix + 'Avatar').className = `piece-icon ${color} king`;
-        const cap = document.getElementById(prefix + 'Captured');
-        cap.innerHTML = '';
-        // Pieces this side has taken = the opponent's pieces missing from the board.
-        for (const type of CAPTURE_ORDER) {
-            const missing = Math.max(0, START_COUNTS[type] - (counts[other(color)][type] || 0));
-            if (!missing) continue;
-            const group = document.createElement('span');
-            group.className = 'group';
-            for (let i = 0; i < missing; i++) group.appendChild(pieceIcon(other(color), type));
-            cap.appendChild(group);
-        }
-        const diff = Math.round((material[color] - material[other(color)]) / 100);
-        if (diff > 0) {
-            const d = document.createElement('span');
-            d.className = 'material-diff';
-            d.textContent = `+${diff}`;
-            cap.appendChild(d);
-        }
+        renderCaptured(document.getElementById(prefix + 'Captured'), color);
     };
     fill('top', topColor);
     fill('bottom', bottomColor);
@@ -754,6 +740,95 @@ function showGameOverModal(status) {
     }
     document.getElementById('reportButton').disabled = sanList().length === 0;
     document.getElementById('gameOverModal').classList.remove('hidden');
+}
+
+// ─── AFTER-GAME PREVIEW ────────────────────────────────────────────────────────
+// When a game ends, a Quick review runs in the background (review-runner.js)
+// so the game-over card can show both accuracies, the move grading and the
+// biggest swing, like chess.com's. The report is cached and saved to the
+// history, so Game Review opens with it instantly and refines from there.
+const PREVIEW_CATEGORIES = ['Brilliant', 'Great', 'Best', 'Excellent', 'Good', 'Book', 'Inaccuracy', 'Mistake', 'Miss', 'Blunder'];
+let previewJob = null;
+
+function cancelGamePreview() {
+    if (previewJob) previewJob.cancel();
+    previewJob = null;
+}
+
+function startGamePreview(sans) {
+    cancelGamePreview();
+    const $ = (id) => document.getElementById(id);
+    $('previewBox').classList.toggle('hidden', sans.length < 2);
+    $('previewLoading').classList.remove('hidden');
+    $('previewReady').classList.add('hidden');
+    $('previewFill').style.width = '0%';
+    $('previewText').textContent = 'Reviewing your game…';
+    if (sans.length < 2) return;
+
+    const token = gameToken, gameId = lastGameId;
+    const show = (report) => {
+        if (token !== gameToken) return;
+        if (gameId) updateHistoryGame(gameId, reviewHistoryFields(report));
+        renderGamePreview(report);
+    };
+    const cached = loadCachedReview(sans, 'quick');
+    if (cached) { show(cached); return; }
+    previewJob = runReview(sans, 'quick', {
+        onMove: (entry, start, received) => {
+            if (token !== gameToken) return;
+            $('previewFill').style.width = `${(received / sans.length) * 100}%`;
+            $('previewText').textContent = `Reviewing your game… ${received} of ${sans.length} moves`;
+        },
+        onDone: (report) => {
+            previewJob = null;
+            saveCachedReview(sans, 'quick', report);
+            show(report);
+        },
+        onError: () => {
+            previewJob = null;
+            if (token === gameToken) $('previewText').textContent = 'The preview isn\'t available — the full review still works.';
+        },
+    });
+    if (!previewJob) $('previewBox').classList.add('hidden');
+}
+
+function renderGamePreview(report) {
+    const $ = (id) => document.getElementById(id);
+    $('previewLoading').classList.add('hidden');
+    $('previewReady').classList.remove('hidden');
+    for (const color of ['white', 'black']) {
+        const suffix = color === 'white' ? 'White' : 'Black';
+        const acc = report.accuracy[color];
+        $('previewAcc' + suffix).textContent = acc === null || acc === undefined ? '–' : acc.toFixed(1);
+        $('previewName' + suffix).textContent = playerLabel(color);
+    }
+    const grades = $('previewGrades');
+    grades.innerHTML = `<span></span><span class="go-col">${escapeText(playerLabel('white'))}</span><span class="go-col">${escapeText(playerLabel('black'))}</span>`;
+    for (const cat of PREVIEW_CATEGORIES) {
+        const w = report.counts.white[cat] || 0, b = report.counts.black[cat] || 0;
+        if (!w && !b) continue; // keeps the card small
+        const row = document.createElement('div');
+        row.className = 'go-grade';
+        row.innerHTML = `<span class="go-cat"><span class="mv-icon" style="background:${CATEGORY_COLORS[cat]}">${CATEGORY_SYMBOLS[cat]}</span>${cat}</span>`
+            + `<span class="go-n" style="color:${w ? CATEGORY_COLORS[cat] : ''}">${w}</span><span class="go-n" style="color:${b ? CATEGORY_COLORS[cat] : ''}">${b}</span>`;
+        grades.appendChild(row);
+    }
+    // The biggest swing by the human (either side in engine vs engine).
+    const mine = report.perMove.filter(m => ['Mistake', 'Miss', 'Blunder'].includes(m.category)
+        && (gameMode !== 'human' || m.color === playerColor));
+    const worst = mine.sort((a, b) => b.winLoss - a.winLoss)[0];
+    const moment = $('previewMoment');
+    moment.classList.toggle('hidden', !worst);
+    if (worst) {
+        const prefix = `${Math.floor(worst.ply / 2) + 1}${worst.ply % 2 ? '...' : '.'}`;
+        const why = worst.reason || (worst.bestMove ? `Best was ${worst.bestMove.san}.` : '');
+        moment.innerHTML = `<span class="mv-icon" style="background:${CATEGORY_COLORS[worst.category]}">${CATEGORY_SYMBOLS[worst.category]}</span>`
+            + `<span><strong>Biggest swing: ${prefix} ${escapeText(worst.san)}</strong> ${escapeText(why)}</span>`;
+    }
+}
+
+function escapeText(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 function openReview() {

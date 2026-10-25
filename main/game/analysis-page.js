@@ -4,11 +4,11 @@
 // analysis-worker.js, and renders the review — classified move list, eval bar,
 // eval graph, accuracy, move-quality counts, best-move arrows and lines.
 //
-// From any position you can also play your own moves ("what if"): each one is
-// judged like a game move, the engine answers at full strength, and the line
-// shows up inside the move list. Errors can be replayed as a puzzle.
+// Layout: board column + one side panel (game header, coach caption, tabs
+// Moves / Summary / Retry, pinned navigation). From any position you can play
+// your own moves: each one is judged like a game move and the line shows up in
+// the move list; a live engine shows the best lines for whatever is on the board.
 const HANDOFF_KEY = 'chessGameForAnalysis';
-const CACHE_KEY = 'chessAnalysisCache';
 const MODE_KEY = 'chessAnalysisMode';
 const PUZZLE_BANK_KEY = 'chessPuzzleBank';
 const PUZZLE_BANK_CAP = 300;
@@ -21,7 +21,6 @@ let startEval = null;
 let analyzing = false;
 let selectedPly = -1;   // -1 = starting position
 let analysisMode = 'standard';
-let worker = null;
 let board = null;
 let flipped = false;
 
@@ -59,11 +58,24 @@ document.addEventListener('DOMContentLoaded', () => {
     $('retryButton').addEventListener('click', () => startRetry());
     $('retryExitButton').addEventListener('click', () => exitRetry());
     $('analyzePgnButton').addEventListener('click', importPGN);
+    $('cancelLoadButton').addEventListener('click', closeLoadModal);
+    $('loadModal').addEventListener('click', (e) => { if (e.target === $('loadModal')) closeLoadModal(); });
+    $('loadGameButton').addEventListener('click', () => { closeMenu(); openLoadModal(); });
+    $('emptyLoadButton').addEventListener('click', openLoadModal);
+    $('copyPgnButton').addEventListener('click', () => { closeMenu(); copyPGN(); });
+    $('downloadPgnButton').addEventListener('click', () => { closeMenu(); downloadPGN(); });
+    $('menuButton').addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+    document.addEventListener('click', (e) => { if (!e.target.closest('.menu-wrap')) closeMenu(); });
+    document.querySelectorAll('.side-tabs button').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+    $('walkButton').addEventListener('click', startWalk);
     $('liveToggle').addEventListener('change', (e) => setLiveOn(e.target.checked));
+    $('liveMoreButton').addEventListener('click', () => setLiveExpanded(!liveExpanded));
     try { liveOn = localStorage.getItem(LIVE_KEY) !== 'off'; } catch (e) { /* default on */ }
+    try { liveExpanded = localStorage.getItem(LIVE_LINES_KEY) === 'all'; } catch (e) { /* default: one line */ }
 
     document.addEventListener('keydown', (e) => {
-        if ((e.target.closest && e.target.closest('textarea, input')) || document.querySelector('.modal-overlay')) return;
+        if (e.key === 'Escape' && !$('loadModal').classList.contains('hidden')) { closeLoadModal(); return; }
+        if ((e.target.closest && e.target.closest('textarea, input')) || document.querySelector('.modal-overlay:not(.hidden)')) return;
         const keys = { ArrowLeft: stepBack, ArrowRight: stepForward, Home: () => goTo(-1), End: goToEnd,
                        f: flipBoard, F: flipBoard, ' ': playEngineMove, Escape: leaveTrainingMode };
         if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
@@ -99,11 +111,62 @@ function syncModeButtons() {
 }
 
 function showEmptyState() {
-    setCaption({ icon: '♟', title: 'No game to review yet', line: 'Play a game, or paste a PGN below.' });
+    setCaption({ icon: '♟', title: 'No game to review yet', line: 'Play a game, or load one from a PGN.' });
     $('progressText').textContent = 'No game loaded';
     $('movesEmpty').classList.remove('hidden');
-    $('pgnInput').focus();
     renderCounts();
+    renderLive();
+    openLoadModal();
+}
+
+// ─── SIDE PANEL: TABS, MENU, LOAD / EXPORT ─────────────────────────────────────
+let activeTab = 'moves';
+
+// Leaving the Retry tab ends a retry in progress (it owns the board).
+function setTab(name) {
+    if (name === activeTab) return;
+    if (activeTab === 'retry' && retry) exitRetry();
+    activeTab = name;
+    document.querySelectorAll('.side-tabs button').forEach(b => {
+        b.classList.toggle('selected', b.dataset.tab === name);
+        b.setAttribute('aria-selected', String(b.dataset.tab === name));
+    });
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== name));
+    if (name === 'moves') highlightMoveCell();
+}
+
+function toggleMenu() {
+    const open = $('reviewMenu').classList.toggle('hidden') === false;
+    $('menuButton').setAttribute('aria-expanded', String(open));
+}
+function closeMenu() {
+    $('reviewMenu').classList.add('hidden');
+    $('menuButton').setAttribute('aria-expanded', 'false');
+}
+
+function openLoadModal() {
+    $('loadModal').classList.remove('hidden');
+    $('pgnInput').focus();
+}
+function closeLoadModal() { $('loadModal').classList.add('hidden'); }
+
+function gamePGN() {
+    const tokens = game.sanMoves.map((san, i) => (i % 2 === 0 ? `${i / 2 + 1}. ` : '') + san);
+    return [`[White "${game.white}"]`, `[Black "${game.black}"]`, `[Result "${game.result}"]`, '', tokens.join(' ') + ' ' + game.result].join('\n');
+}
+
+async function copyPGN() {
+    if (!game) return;
+    try { await navigator.clipboard.writeText(gamePGN()); showToast('PGN copied.'); } catch (e) { showToast('Copying isn\'t allowed here.'); }
+}
+
+function downloadPGN() {
+    if (!game) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([gamePGN() + '\n'], { type: 'application/x-chess-pgn' }));
+    a.download = `game-review-${new Date().toISOString().slice(0, 10)}.pgn`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // ─── LOADING A GAME ────────────────────────────────────────────────────────────
@@ -132,8 +195,12 @@ function loadGame(data) {
     board.setFlipped(flipped);
     $('evalBar').classList.toggle('flipped', flipped);
     $('movesEmpty').classList.add('hidden');
-    $('accWhiteName').textContent = game.white;
-    $('accBlackName').textContent = game.black;
+    const shortName = (n) => n.replace(/\s*\(.*\)$/, ''); // "Engine (≈960)" -> "Engine" in the header
+    $('accWhiteName').textContent = shortName(game.white);
+    $('accBlackName').textContent = shortName(game.black);
+    $('gameResult').textContent = { '1-0': '1–0', '0-1': '0–1', '1/2-1/2': '½–½' }[game.result] || '';
+    stopWalk();
+    setTab('moves');
     updatePlayerStrips();
     buildMoveList();
     selectPly(-1);
@@ -148,6 +215,7 @@ function importPGN() {
     if (parsed.sanMoves.length === 0) { showToast('No moves found in that text.'); return; }
     try { localStorage.setItem(HANDOFF_KEY, JSON.stringify(parsed)); } catch (e) { /* still analyze */ }
     $('pgnInput').value = '';
+    closeLoadModal();
     loadGame(parsed);
 }
 
@@ -165,121 +233,83 @@ function parsePGN(text) {
 }
 
 // ─── RUNNING THE ANALYSIS ──────────────────────────────────────────────────────
-function cacheKey() {
-    return `${ANALYSIS_VERSION}|${analysisMode}|${game.sanMoves.join(' ')}`;
-}
+// The review runs on a worker pool (review-runner.js) and streams into the page
+// move by move. When a Quick review of the same game is already cached (the game
+// page makes one for its after-game card) it is shown at once, and the chosen
+// mode refines it in the background, replacing it when done.
+let analysisJob = null;  // runReview() handle while a review runs
+let analysisRun = 0;     // bumps per analysis; callbacks from older runs are ignored
+let refining = false;    // a cached quicker report is on screen while this run finishes
 
-// The game is cut into ranges of consecutive moves, handed out to a pool of
-// workers (one per spare CPU core) — about three ranges per worker so faster
-// workers pick up more. When every range is in, one worker builds the final
-// report and the pool is shut down (the live engine and the move judge have
-// workers of their own).
-const MAX_ANALYSIS_WORKERS = 8;
-const MIN_RANGE = 4;
-let pool = [];           // analysis workers; pool[0] === worker
-let analysisJob = null;  // { run, queue, pending, received }
-let analysisRun = 0;     // bumps per analysis; messages from older runs are ignored
-
-function terminatePool() {
-    for (const w of pool) w.terminate();
-    pool = [];
-    worker = null;
+function stopAnalysisJob() {
+    if (analysisJob) analysisJob.cancel();
     analysisJob = null;
 }
 
 function startAnalysis() {
-    terminatePool();
+    stopAnalysisJob();
     entries = [];
     report = null;
     startEval = null;
+    refining = false;
     clearPuzzle();
     clearRetry();
     stopLive();
     refreshAllMoveCells();
-    $('keyMomentsPanel').classList.add('hidden');
+    stopWalk();
+    renderKeyMoments();
+    updateRetryButton();
     const run = ++analysisRun;
 
-    let cached = null;
-    try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) { cached = null; }
-    if (cached && cached.key === cacheKey() && cached.report) {
-        finishAnalysis(cached.report, true);
-        return;
+    const cached = loadCachedReview(game.sanMoves, analysisMode);
+    if (cached) { finishAnalysis(cached, true); return; }
+    const quick = analysisMode !== 'quick' ? loadCachedReview(game.sanMoves, 'quick') : null;
+    if (quick) {
+        finishAnalysis(quick, true);
+        refining = true;
+    } else {
+        analyzing = true;
+        renderSummary();
+        renderGraph();
     }
 
-    analyzing = true;
-    renderSummary();
-    renderGraph();
-    const n = game.sanMoves.length;
-    const cores = navigator.hardwareConcurrency || 2;
-    const size = Math.max(1, Math.min(MAX_ANALYSIS_WORKERS, cores - 1, Math.ceil(n / MIN_RANGE)));
-    for (let i = 0; i < size; i++) {
-        const w = createWorker(run);
-        if (!w) break;
-        pool.push(w);
-    }
-    if (!pool.length) {
+    analysisJob = runReview(game.sanMoves, analysisMode, {
+        onStart: (opening) => { if (run === analysisRun && !refining) renderOpening(opening); },
+        onMove: (entry, start, received) => {
+            if (run !== analysisRun) return;
+            setProgress(received, game.sanMoves.length, entry.depth);
+            if (refining) return; // the quick report stays until the whole run is in
+            if (start !== null && start !== undefined) startEval = start;
+            entries[entry.ply] = entry;
+            updateMoveCell(entry.ply);
+            renderGraph();
+            renderCounts();
+            if (entry.ply === selectedPly || (selectedPly === -1 && entry.ply === 0)) refreshSelection();
+        },
+        onFinalizing: () => { if (run === analysisRun) $('progressText').textContent = refining ? 'Refining… building the report' : 'Building the report…'; },
+        onDone: (finished) => {
+            if (run !== analysisRun) return;
+            analysisJob = null;
+            refining = false;
+            finishAnalysis(finished, false);
+        },
+        onError: (message) => { if (run === analysisRun) analysisFailed(message); },
+    });
+    if (!analysisJob) {
         $('progressText').textContent = 'Analysis needs the site served over http(s) (Web Workers are blocked here).';
         analyzing = false;
+        refining = false;
         return;
     }
-    worker = pool[0];
-    setProgress(0, n);
-
-    const rangeSize = Math.max(MIN_RANGE, Math.ceil(n / (pool.length * 3)));
-    const queue = [];
-    for (let from = 0; from < n; from += rangeSize) queue.push({ rangeId: queue.length, from, to: Math.min(n, from + rangeSize) });
-    analysisJob = { run, queue, pending: queue.length, received: 0 };
-    pool.forEach(dispatchRange);
-}
-
-function dispatchRange(w) {
-    const range = analysisJob && analysisJob.queue.shift();
-    if (range) w.postMessage({ type: 'analyzeRange', sanMoves: game.sanMoves, mode: analysisMode, ...range });
+    setProgress(0, game.sanMoves.length);
 }
 
 function analysisFailed(message) {
     analyzing = false;
-    terminatePool();
+    refining = false;
+    stopAnalysisJob();
+    $('progressBox').classList.remove('hidden');
     $('progressText').textContent = 'Analysis failed: ' + message;
-}
-
-function createWorker(run) {
-    let w;
-    try { w = new Worker('analysis-worker.js?v=12'); } catch (e) { return null; }
-    const current = () => run === analysisRun;
-    w.onmessage = (e) => {
-        const d = e.data;
-        if (d.type === 'start') {
-            if (current()) renderOpening(d.opening);
-        } else if (d.type === 'move') {
-            if (!current() || !analysisJob) return;
-            if (d.startEval !== null && d.startEval !== undefined) startEval = d.startEval;
-            entries[d.entry.ply] = d.entry;
-            analysisJob.received++;
-            updateMoveCell(d.entry.ply);
-            setProgress(analysisJob.received, game.sanMoves.length, d.entry.depth);
-            renderGraph();
-            renderCounts();
-            if (d.entry.ply === selectedPly || (selectedPly === -1 && d.entry.ply === 0)) refreshSelection();
-        } else if (d.type === 'rangeDone') {
-            if (!current() || !analysisJob) return;
-            analysisJob.pending--;
-            if (analysisJob.queue.length) dispatchRange(w);
-            else if (analysisJob.pending === 0) {
-                $('progressText').textContent = 'Building the report…';
-                worker.postMessage({ type: 'finalize', entries: entries.filter(Boolean), startEval, sanMoves: game.sanMoves, mode: analysisMode });
-            }
-        } else if (d.type === 'done') {
-            if (current()) finishAnalysis(d.report, false);
-        } else if (d.type === 'error') {
-            if (current()) analysisFailed(d.message);
-        }
-    };
-    w.onerror = (err) => {
-        err.preventDefault();
-        if (current()) analysisFailed(err.message || 'worker error');
-    };
-    return w;
 }
 
 function finishAnalysis(finished, fromCache) {
@@ -287,7 +317,6 @@ function finishAnalysis(finished, fromCache) {
     entries = finished.perMove.slice();
     startEval = finished.startEval;
     analyzing = false;
-    terminatePool();
     refreshAllMoveCells();
     renderVariations();
     renderOpening(finished.opening);
@@ -299,7 +328,7 @@ function finishAnalysis(finished, fromCache) {
     refreshSelection();
     updateRetryButton();
     if (!fromCache) {
-        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ key: cacheKey(), report: finished })); } catch (e) { /* cache is optional */ }
+        saveCachedReview(game.sanMoves, analysisMode, finished);
         growPuzzleBank(game.sanMoves, finished.perMove);
     }
     if (game.historyId) saveReviewToHistory(finished);
@@ -309,9 +338,10 @@ function finishAnalysis(finished, fromCache) {
 function setProgress(done, total, depth) {
     $('progressBox').classList.remove('hidden');
     $('progressFill').style.width = `${total ? (done / total) * 100 : 0}%`;
-    $('progressText').textContent = `Analyzed ${done} of ${total} moves…`;
-    const cores = pool.length > 1 ? `${pool.length} cores · ` : '';
-    $('progressDepth').textContent = cores + (depth ? `depth ${depth}` : ANALYSIS_MODES[analysisMode].label);
+    const label = ANALYSIS_MODES[analysisMode].label;
+    $('progressText').textContent = refining ? `Refining to ${label}… ${done} of ${total}` : `Analyzed ${done} of ${total} moves…`;
+    const cores = analysisJob && analysisJob.size > 1 ? `${analysisJob.size} cores · ` : '';
+    $('progressDepth').textContent = cores + (depth ? `depth ${depth}` : label);
 }
 
 // ─── NAVIGATION ────────────────────────────────────────────────────────────────
@@ -328,10 +358,15 @@ function stepForward() {
     if (!game || retry || puzzle) return;
     if (cursor) {
         const v = variationById(cursor.id);
-        if (cursor.index < v.moves.length - 1) goToNode({ id: v.id, index: cursor.index + 1 });
+        if (cursor.index < v.moves.length - 1) {
+            goToNode({ id: v.id, index: cursor.index + 1 });
+            playSoundForMove(v.moves[cursor.index].san);
+        }
         return;
     }
-    selectPly(Math.min(game.sanMoves.length - 1, selectedPly + 1));
+    if (selectedPly >= game.sanMoves.length - 1) return;
+    selectPly(selectedPly + 1);
+    playSoundForMove(game.sanMoves[selectedPly]);
 }
 
 // End of the line being viewed: the game's last move, or the variation's.
@@ -447,6 +482,7 @@ function refreshSelection() {
         color: CATEGORY_COLORS[entry.category], title: entry.category,
     } : null);
     $('variationBanner').classList.toggle('hidden', !cursor);
+    updatePlayerStrips(); // captured pieces follow the shown position
 
     if (cursor) renderVariationCaption();
     else renderCaption(selectedPly, entry);
@@ -458,6 +494,7 @@ function refreshSelection() {
     $('navStart').disabled = atStart;
     $('navNext').disabled = atEnd;
     $('navEnd').disabled = atEnd;
+    renderWalkBar();
     startLive(); // also redraws the arrows and the eval bar
 }
 
@@ -692,6 +729,8 @@ function updatePlayerStrips() {
     $('bottomName').textContent = name(bottomColor);
     $('topAvatar').className = `piece-icon ${topColor} king`;
     $('bottomAvatar').className = `piece-icon ${bottomColor} king`;
+    renderCaptured($('topCaptured'), topColor);
+    renderCaptured($('bottomCaptured'), bottomColor);
     const acc = report ? report.accuracy : null;
     for (const [id, color] of [['topAcc', topColor], ['bottomAcc', bottomColor]]) {
         const v = acc ? acc[color] : null;
@@ -718,29 +757,30 @@ function renderSummary() {
     }
 }
 
+// Move quality as a compact two-column grid: icon, name, White's and Black's
+// count (click a count to jump to that side's next such move).
 function renderCounts() {
-    const table = $('countsTable');
-    table.innerHTML = '';
+    const grid = $('countsTable');
+    grid.innerHTML = '';
     const counts = { white: {}, black: {} };
     entries.forEach(e => { if (e) counts[e.color][e.category] = (counts[e.color][e.category] || 0) + 1; });
     for (const cat of CATEGORY_ORDER) {
-        const tr = document.createElement('tr');
-        const label = document.createElement('td');
-        label.innerHTML = `<span class="cat"><span class="mv-icon" style="background:${CATEGORY_COLORS[cat]}">${CATEGORY_SYMBOLS[cat]}</span>${cat}</span>`;
-        tr.appendChild(label);
+        const cell = document.createElement('div');
+        cell.className = 'quality-cell';
+        cell.innerHTML = `<span class="mv-icon" style="background:${CATEGORY_COLORS[cat]}">${CATEGORY_SYMBOLS[cat]}</span><span>${cat}</span>`;
         for (const color of ['white', 'black']) {
-            const td = document.createElement('td');
             const n = counts[color][cat] || 0;
-            td.className = 'n' + (n ? ' clickable' : ' zero');
-            td.textContent = n;
-            td.style.color = n ? CATEGORY_COLORS[cat] : '';
+            const span = document.createElement('span');
+            span.className = 'n' + (n ? ' clickable' : ' zero');
+            span.textContent = n;
+            span.style.color = n ? CATEGORY_COLORS[cat] : '';
             if (n) {
-                td.title = `Jump to ${color}'s next ${cat.toLowerCase()} move`;
-                td.addEventListener('click', () => jumpToCategory(color, cat));
+                span.title = `Jump to ${color}'s next ${cat.toLowerCase()} move`;
+                span.addEventListener('click', () => { jumpToCategory(color, cat); setTab('moves'); });
             }
-            tr.appendChild(td);
+            cell.appendChild(span);
         }
-        table.appendChild(tr);
+        grid.appendChild(cell);
     }
 }
 
@@ -748,16 +788,7 @@ function renderCounts() {
 // Stores the review's headline numbers on the game in the history list (the
 // history page shows accuracy and tallies the kinds of mistakes made).
 function saveReviewToHistory(finished) {
-    const side = (color) => {
-        const moves = finished.perMove.filter(m => m.color === color);
-        const motifs = {};
-        for (const m of moves) if (m.motif && m.winLoss >= 5) motifs[m.motif] = (motifs[m.motif] || 0) + 1;
-        return { counts: finished.counts[color], motifs };
-    };
-    updateHistoryGame(game.historyId, {
-        accuracy: finished.accuracy, reviewMode: finished.mode,
-        review: { white: side('white'), black: side('black') },
-    });
+    updateHistoryGame(game.historyId, reviewHistoryFields(finished));
 }
 
 // ─── KEY MOMENTS ───────────────────────────────────────────────────────────────
@@ -785,7 +816,11 @@ function renderKeyMoments() {
     const list = $('keyMomentsList');
     list.innerHTML = '';
     const moments = report ? keyMoments() : [];
-    $('keyMomentsPanel').classList.toggle('hidden', !report);
+    $('walkButton').disabled = !moments.length;
+    if (!report) {
+        list.innerHTML = `<div class="moves-empty">${game ? 'Appears when the review is finished.' : 'No game loaded.'}</div>`;
+        return;
+    }
     if (!moments.length) {
         list.innerHTML = '<div class="moves-empty">A clean game — no big swings.</div>';
         return;
@@ -805,6 +840,65 @@ function renderKeyMoments() {
     }
 }
 
+// ─── WALK-THROUGH ──────────────────────────────────────────────────────────────
+// "Walk me through it" (only when asked): steps through the key moments, each
+// on the board with its explanation in the coach caption, then offers Retry.
+let walk = null; // { moments: [ply], index } — index === moments.length is the end card
+
+function startWalk() {
+    const moments = keyMoments().map(e => e.ply);
+    if (!moments.length) return;
+    walk = { moments, index: 0 };
+    setTab('moves');
+    selectPly(moments[0]);
+}
+
+function walkTo(index) {
+    walk.index = Math.max(0, Math.min(index, walk.moments.length));
+    if (walk.index < walk.moments.length) selectPly(walk.moments[walk.index]);
+    else renderWalkBar();
+}
+
+function stopWalk() {
+    walk = null;
+    renderWalkBar();
+}
+
+function renderWalkBar() {
+    const bar = $('walkBar');
+    if (!walk || retry || puzzle) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    bar.innerHTML = '';
+    const n = walk.moments.length;
+    const label = document.createElement('span');
+    label.className = 'walk-label';
+    bar.appendChild(label);
+    const button = (text, fn, cls = '') => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn ' + cls;
+        b.textContent = text;
+        b.addEventListener('click', fn);
+        bar.appendChild(b);
+    };
+    if (walk.index >= n) {
+        const mistakes = retryPlies().length;
+        label.textContent = `That's the game — ${n} key moment${n === 1 ? '' : 's'}.`;
+        if (mistakes) button(`↻ Retry ${mistakes} mistake${mistakes === 1 ? '' : 's'}`, () => { stopWalk(); startRetry(); }, 'btn-primary');
+        button('Close', stopWalk);
+        return;
+    }
+    const onMoment = !cursor && selectedPly === walk.moments[walk.index];
+    label.textContent = onMoment ? `Key moment ${walk.index + 1} of ${n}` : 'Walk-through paused';
+    if (onMoment) {
+        if (walk.index > 0) button('◀', () => walkTo(walk.index - 1));
+        button(walk.index + 1 < n ? 'Next moment ▶' : 'Finish', () => walkTo(walk.index + 1), 'btn-primary');
+    } else {
+        button('Resume ▶', () => walkTo(walk.index), 'btn-primary');
+    }
+    button('✕', stopWalk);
+}
+
 // Cycles through `color`'s moves of category `cat`, starting after the selection.
 function jumpToCategory(color, cat) {
     const plies = entries.filter(e => e && e.color === color && e.category === cat).map(e => e.ply);
@@ -814,7 +908,8 @@ function jumpToCategory(color, cat) {
 }
 
 // ─── EVAL GRAPH ────────────────────────────────────────────────────────────────
-const GRAPH_H = 110;
+// A timeline strip under the board: click or drag along it to jump through the game.
+const GRAPH_H = 56;
 
 function graphPoints() {
     const pts = [];
@@ -867,12 +962,19 @@ function renderGraph() {
         tip.classList.remove('hidden');
     };
     svg.onmouseleave = () => $('graphTip').classList.add('hidden');
-    svg.onclick = (e) => {
-        if (!game) return;
+    const jump = (e) => {
         const r = svg.getBoundingClientRect();
-        const k = Math.round(((e.clientX - r.left) / r.width) * n);
-        selectPly(Math.max(-1, Math.min(game.sanMoves.length - 1, k - 1)));
+        const ply = Math.max(-1, Math.min(game.sanMoves.length - 1, Math.round(((e.clientX - r.left) / r.width) * n) - 1));
+        if (ply !== selectedPly || cursor) selectPly(ply);
     };
+    svg.onpointerdown = (e) => {
+        if (!game || retry) return;
+        try { svg.setPointerCapture(e.pointerId); } catch (err) { /* still works while over the strip */ }
+        svg.dataset.scrubbing = '1';
+        jump(e);
+    };
+    svg.onpointermove = (e) => { if (svg.dataset.scrubbing) jump(e); };
+    svg.onpointerup = svg.onpointercancel = () => { delete svg.dataset.scrubbing; };
 }
 
 function renderGraphCursor() {
@@ -933,6 +1035,7 @@ function addMove(move, promo, opts = {}) {
         color, san: san + getCheckSuffix(currentTurn), move, promo: promo || null,
         verdict: opts.verdict || null, engine: !!opts.engine,
     };
+    playSoundForMove(entry.san);
     let target, created = null;
     if (!cursor) {
         const p = selectedPly;
@@ -1113,11 +1216,11 @@ function startLive() {
     if (!(live && live.key === key && (live.done || liveWorker))) {
         stopLive();
         live = null;
-        if (liveOn && !analyzing && !retry && !puzzle) {
+        if (liveOn && !analyzing && !refining && !retry && !puzzle) {
             const run = liveRun;
             liveTimer = setTimeout(() => {
                 if (run !== liveRun) return;
-                try { liveWorker = new Worker('analysis-worker.js?v=12'); } catch (e) { return; }
+                try { liveWorker = new Worker('analysis-worker.js?v=16'); } catch (e) { return; }
                 liveWorker.onmessage = (e) => {
                     const d = e.data;
                     if (run !== liveRun || d.type !== 'live') return;
@@ -1139,8 +1242,22 @@ function setLiveOn(on) {
     startLive();
 }
 
+// The strip shows the best line; expanded, all three.
+const LIVE_LINES_KEY = 'chessLiveLines';
+let liveExpanded = false;
+
+function setLiveExpanded(on) {
+    liveExpanded = on;
+    try { localStorage.setItem(LIVE_LINES_KEY, on ? 'all' : 'one'); } catch (e) { /* this visit only */ }
+    renderLive();
+}
+
 function renderLive() {
     $('liveToggle').checked = liveOn;
+    const more = $('liveMoreButton');
+    more.textContent = liveExpanded ? '1 line ▴' : '3 lines ▾';
+    more.setAttribute('aria-expanded', String(liveExpanded));
+    more.classList.toggle('hidden', !liveOn);
     const list = $('liveLines');
     const l = liveForShownPosition();
     list.innerHTML = '';
@@ -1151,12 +1268,12 @@ function renderLive() {
     const note = (text) => { list.innerHTML = `<div class="engine-note">${escapeHTML(text)}</div>`; };
     if (!liveOn) note('Engine off — switch it on to see the best lines for any position.');
     else if (!game) note('Load a game to analyze.');
-    else if (analyzing) note('The live engine starts when the review is finished.');
+    else if (analyzing || refining) note('The live engine starts when the review is finished.');
     else if (!l) note('Thinking…');
     else if (l.terminal) note(l.terminal);
     else {
         const startPly = nodePly(currentNode()) + 1;
-        for (const line of l.lines) {
+        for (const line of l.lines.slice(0, liveExpanded ? 3 : 1)) {
             const row = document.createElement('div');
             row.className = 'engine-line';
             row.innerHTML = `<span class="eval-pill${line.evalWhite >= 0 ? ' white-adv' : ''}">${formatEval(line.evalWhite)}</span>`;
@@ -1189,7 +1306,7 @@ const judgeWaiting = new Map();
 
 function judgeMove(sanMoves, san) {
     if (!judgeWorker) {
-        try { judgeWorker = new Worker('analysis-worker.js?v=12'); } catch (e) { return Promise.reject(e); }
+        try { judgeWorker = new Worker('analysis-worker.js?v=16'); } catch (e) { return Promise.reject(e); }
         judgeWorker.onmessage = (e) => {
             const d = e.data;
             const waiting = judgeWaiting.get(d.requestId);
@@ -1213,6 +1330,7 @@ function startPuzzle() {
     const ply = selectedPly;
     stopLive();
     puzzle = { ply, target: entry.punishMove, solved: false };
+    renderWalkBar();
     positionAt(ply);
     board.render(gameState);
     board.setArrows([]);
@@ -1270,24 +1388,29 @@ function retryPlies() {
     return entries.filter(e => e && RETRY_CATEGORIES.has(e.category) && sides.includes(e.color) && e.bestMove).map(e => e.ply);
 }
 
+// The Retry tab's start card and badge.
 function updateRetryButton() {
     const n = retryPlies().length;
-    $('retryFooter').classList.toggle('hidden', !report);
     $('retryButton').disabled = n === 0;
-    $('retryCount').textContent = n === 0 ? 'No mistakes to retry — nicely played.' : `${n} moment${n === 1 ? '' : 's'} to fix`;
+    $('retryCount').textContent = !report ? (game ? 'Available when the review is finished.' : 'Load a game first.')
+        : n === 0 ? 'No mistakes to retry — nicely played.'
+        : `${n} moment${n === 1 ? '' : 's'} where a better move was there. Find it from the same position.`;
+    $('retryBadge').textContent = n;
+    $('retryBadge').classList.toggle('hidden', !report || n === 0);
 }
 
 function startRetry(plies = retryPlies()) {
     if (!plies.length) return;
     clearPuzzle();
     stopLive();
+    stopWalk();
+    setTab('retry');
     cursor = null;
     retry = { plies, index: -1, status: 'solving', results: plies.map(() => null), attempt: null, hinted: false, token: 0 };
+    $('retryFooter').classList.add('hidden');
     $('retryPanel').classList.remove('hidden');
     $('captionCard').classList.add('hidden');
-    $('enginePanel').classList.add('hidden');
     $('variationBanner').classList.add('hidden');
-    $('retryPanel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     showRetryItem(0);
 }
 
@@ -1345,6 +1468,7 @@ function resetRetryBoard() {
     board.updateCheckFromGame();
     board.setBadge(null);
     board.setArrows([arrowFor(game.moves[ply].move, PLAYED_ARROW, 0.12)]);
+    updatePlayerStrips();
 }
 
 function setRetryFeedback(fb) {
@@ -1564,6 +1688,7 @@ function exploreFromRetry() {
 function exitRetry(ply) {
     const target = ply !== undefined ? ply : (retry ? retry.plies[Math.min(retry.index, retry.plies.length - 1)] : selectedPly);
     clearRetry();
+    setTab('moves');
     selectPly(target);
 }
 
@@ -1571,8 +1696,8 @@ function clearRetry() {
     if (!retry) return;
     retry = null;
     $('retryPanel').classList.add('hidden');
+    $('retryFooter').classList.remove('hidden');
     $('captionCard').classList.remove('hidden');
-    $('enginePanel').classList.remove('hidden');
     board.clearSelection();
 }
 

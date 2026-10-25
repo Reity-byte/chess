@@ -4,18 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Review · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=12">
-    <link rel="stylesheet" href="../pieces.css?v=12">
-    <script src="../style-settings.js?v=12"></script>
-    <link rel="stylesheet" href="game.css?v=12">
-    <script src="engine.js?v=12" defer></script>
-    <script src="notation.js?v=12" defer></script>
-    <script src="analysis.js?v=12" defer></script>
-    <script src="board-ui.js?v=12" defer></script>
-    <script src="history-store.js?v=12" defer></script>
-    <script src="analysis-page.js?v=12" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=16">
+    <link rel="stylesheet" href="../pieces.css?v=16">
+    <script src="../style-settings.js?v=16"></script>
+    <link rel="stylesheet" href="game.css?v=16">
+    <script src="engine.js?v=16" defer></script>
+    <script src="notation.js?v=16" defer></script>
+    <script src="analysis.js?v=16" defer></script>
+    <script src="board-ui.js?v=16" defer></script>
+    <script src="sound.js?v=16" defer></script>
+    <script src="history-store.js?v=16" defer></script>
+    <script src="review-runner.js?v=16" defer></script>
+    <script src="analysis-page.js?v=16" defer></script>
 </head>
-<body>
+<body class="app-shell">
 
     <header class="topbar">
         <a class="brand" href="../site.html">
@@ -32,40 +34,78 @@
         </div>
     </header>
 
-    <main class="play-page has-evalbar">
+    <main class="review-page">
+        <!-- ── BOARD ─────────────────────────────────────────────────────────── -->
         <section class="board-area">
             <div class="player-strip">
                 <div class="avatar"><span class="piece-icon black king" id="topAvatar"></span></div>
-                <div class="player-meta"><span class="player-name" id="topName">Black</span></div>
-                <span class="chip" id="topAcc" style="margin-left:auto" hidden></span>
+                <div class="player-meta">
+                    <span class="player-name" id="topName">Black</span>
+                    <div class="captured" id="topCaptured"></div>
+                </div>
+                <span class="chip" id="topAcc" hidden></span>
             </div>
 
             <div class="board-row">
                 <div class="eval-bar" id="evalBar">
                     <div class="eval-fill" id="evalFill"></div>
-                    <span class="eval-label bottom" id="evalLabel">0.0</span>
+                    <span class="eval-label bottom" id="evalLabel"></span>
                 </div>
                 <div id="chessboard"></div>
             </div>
 
             <div class="player-strip">
                 <div class="avatar"><span class="piece-icon white king" id="bottomAvatar"></span></div>
-                <div class="player-meta"><span class="player-name" id="bottomName">White</span></div>
-                <span class="chip" id="bottomAcc" style="margin-left:auto" hidden></span>
+                <div class="player-meta">
+                    <span class="player-name" id="bottomName">White</span>
+                    <div class="captured" id="bottomCaptured"></div>
+                </div>
+                <span class="chip" id="bottomAcc" hidden></span>
             </div>
 
-            <div class="review-nav">
-                <button class="btn" id="navStart" title="Start (Home)" aria-label="Go to start">⏮</button>
-                <button class="btn" id="navPrev" title="Previous (←)" aria-label="Previous move">◀</button>
-                <button class="btn" id="navNext" title="Next (→)" aria-label="Next move">▶</button>
-                <button class="btn" id="navEnd" title="End (End)" aria-label="Go to end">⏭</button>
-                <button class="btn" id="navFlip" title="Flip board (F)" aria-label="Flip board">⇅</button>
+            <div class="graph-strip">
+                <svg class="eval-graph" id="evalGraph" role="img" aria-label="Evaluation over the game — click or drag to jump"></svg>
+                <div class="graph-tip hidden" id="graphTip"></div>
             </div>
         </section>
 
-        <aside class="side">
+        <!-- ── SIDE PANEL ────────────────────────────────────────────────────── -->
+        <aside class="review-side panel">
+            <div class="game-header">
+                <div class="acc-pair">
+                    <div class="acc-side white"><span class="acc-value" id="accWhite">–</span><span class="acc-label" id="accWhiteName">White</span></div>
+                    <div class="acc-mid">
+                        <span class="eyebrow">Accuracy</span>
+                        <span class="game-result" id="gameResult"></span>
+                    </div>
+                    <div class="acc-side black"><span class="acc-value" id="accBlack">–</span><span class="acc-label" id="accBlackName">Black</span></div>
+                </div>
+                <div class="header-row">
+                    <div class="opening-line" id="openingLine"></div>
+                    <div class="menu-wrap">
+                        <button class="btn btn-ghost btn-icon" id="menuButton" aria-label="Review options" aria-haspopup="true" aria-expanded="false">⋯</button>
+                        <div class="menu hidden" id="reviewMenu" role="menu">
+                            <div class="menu-label eyebrow">Analysis depth</div>
+                            <div class="segmented" id="modeSelect">
+                                <button data-mode="quick">Quick</button>
+                                <button data-mode="standard">Standard</button>
+                                <button data-mode="deep">Deep</button>
+                            </div>
+                            <button class="menu-item" id="loadGameButton" role="menuitem">📋 Load another game…</button>
+                            <button class="menu-item" id="copyPgnButton" role="menuitem">⧉ Copy PGN</button>
+                            <button class="menu-item" id="downloadPgnButton" role="menuitem">⤓ Download PGN</button>
+                            <a class="menu-item" href="game.html" role="menuitem">♟ Play a new game</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="progress" id="progressBox">
+                    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+                    <div class="progress-text"><span id="progressText">Waiting…</span><span id="progressDepth"></span></div>
+                </div>
+            </div>
+
             <div id="variationBanner" class="banner hidden">
-                <span>Your own line — the game itself is unchanged</span>
+                <span>Your own line — the game is unchanged</span>
                 <button id="backToGameButton" class="btn">Back to game</button>
             </div>
             <div id="puzzleBanner" class="banner puzzle hidden">
@@ -73,112 +113,107 @@
                 <button id="exitPuzzleButton" class="btn">Exit</button>
             </div>
 
-            <div class="panel caption-card" id="captionCard">
+            <div class="caption-card" id="captionCard">
                 <div class="caption-icon" id="captionIcon">♟</div>
-                <div style="min-width:0; flex:1">
+                <div class="caption-body">
                     <div class="caption-title" id="captionTitle">Loading…</div>
                     <div class="caption-line" id="captionLine"></div>
                     <div class="caption-line" id="captionLine2"></div>
-                    <button id="tryPuzzleButton" class="btn hidden" style="margin-top:10px; height:34px">🧩 Practice this moment</button>
+                    <button id="tryPuzzleButton" class="btn btn-sm hidden">🧩 Practice this moment</button>
+                    <div class="walk-bar hidden" id="walkBar"></div>
                 </div>
             </div>
 
-            <div class="panel retry-panel hidden" id="retryPanel">
-                <div class="retry-head">
-                    <div>
-                        <div class="eyebrow">Fix your mistakes</div>
-                        <div class="retry-counter" id="retryCounter">1 / 1</div>
+            <nav class="side-tabs" role="tablist">
+                <button role="tab" data-tab="moves" class="selected">Moves</button>
+                <button role="tab" data-tab="summary">Summary</button>
+                <button role="tab" data-tab="retry">Retry <span class="tab-badge hidden" id="retryBadge"></span></button>
+            </nav>
+
+            <div class="tab-body">
+                <!-- Moves: live engine + move list -->
+                <section class="tab-pane" data-pane="moves">
+                    <div class="engine-strip" id="enginePanel">
+                        <div class="engine-head">
+                            <label class="engine-toggle"><input type="checkbox" class="switch" id="liveToggle" checked> Engine</label>
+                            <span class="eval-pill hidden" id="liveEval"></span>
+                            <span class="muted engine-depth" id="liveDepth"></span>
+                            <button class="btn btn-ghost engine-more" id="liveMoreButton" aria-expanded="false" title="Show more lines">3 lines ▾</button>
+                        </div>
+                        <div class="engine-lines" id="liveLines"></div>
                     </div>
-                    <button id="retryExitButton" class="btn btn-ghost btn-icon" title="Back to the review (Esc)" aria-label="Exit retry">✕</button>
-                </div>
-                <div class="retry-dots" id="retryDots"></div>
-                <div class="retry-body">
-                    <div class="retry-task" id="retryTask"></div>
-                    <div class="retry-what" id="retryWhat"></div>
-                    <div class="retry-feedback hidden" id="retryFeedback"></div>
-                </div>
-                <div class="retry-actions" id="retryActions"></div>
-            </div>
-
-            <div class="panel engine-panel" id="enginePanel">
-                <div class="panel-header">
-                    <label class="engine-toggle"><input type="checkbox" class="switch" id="liveToggle" checked> Engine</label>
-                    <span class="eval-pill hidden" id="liveEval"></span>
-                    <span class="muted" id="liveDepth"></span>
-                    <span class="muted engine-keys" title="Play the engine's move">Space ▶</span>
-                </div>
-                <div class="engine-lines" id="liveLines"></div>
-            </div>
-
-            <div class="panel" id="summaryPanel">
-                <div class="panel-header">Game Review
-                    <div class="segmented" id="modeSelect" style="margin-left:auto; padding:3px">
-                        <button data-mode="quick" style="height:28px">Quick</button>
-                        <button data-mode="standard" style="height:28px">Standard</button>
-                        <button data-mode="deep" style="height:28px">Deep</button>
+                    <div class="moves-scroll" id="movesScroll">
+                        <div class="moves-grid" id="movesGrid"></div>
+                        <div class="moves-empty hidden" id="movesEmpty">
+                            <p>No game loaded.</p>
+                            <button class="btn btn-primary" id="emptyLoadButton">Load a game</button>
+                        </div>
                     </div>
-                </div>
-                <div class="summary-head">
-                    <div class="acc-side white">
-                        <div class="acc-value" id="accWhite">–</div>
-                        <div class="acc-label" id="accWhiteName">White</div>
+                </section>
+
+                <!-- Summary: walk-through, key moments, move quality, phases -->
+                <section class="tab-pane hidden" data-pane="summary">
+                    <button class="btn btn-primary btn-block" id="walkButton" disabled>▶ Walk me through it</button>
+                    <div class="eyebrow pane-label">Key moments</div>
+                    <div class="moments" id="keyMomentsList"></div>
+                    <div class="eyebrow pane-label">Move quality <span class="faint">White · Black</span></div>
+                    <div class="quality-grid" id="countsTable"></div>
+                    <div class="eyebrow pane-label">Accuracy by phase</div>
+                    <div class="phase-grid">
+                        <div class="phase-row head"><span></span><span>Opening</span><span>Middle</span><span>End</span></div>
+                        <div class="phase-row" id="phaseWhite"><span>White</span><span>–</span><span>–</span><span>–</span></div>
+                        <div class="phase-row" id="phaseBlack"><span>Black</span><span>–</span><span>–</span><span>–</span></div>
                     </div>
-                    <div class="acc-vs">ACCURACY</div>
-                    <div class="acc-side black">
-                        <div class="acc-value" id="accBlack">–</div>
-                        <div class="acc-label" id="accBlackName">Black</div>
+                </section>
+
+                <!-- Retry: start card, then the trainer -->
+                <section class="tab-pane hidden" data-pane="retry">
+                    <div class="retry-start" id="retryFooter">
+                        <div class="retry-start-icon">↻</div>
+                        <div class="retry-start-text" id="retryCount">Waiting for the review…</div>
+                        <button id="retryButton" class="btn btn-primary" disabled>Start retrying</button>
                     </div>
-                </div>
-                <div class="opening-line" id="openingLine"></div>
-                <div class="progress" id="progressBox">
-                    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
-                    <div class="progress-text"><span id="progressText">Waiting…</span><span id="progressDepth"></span></div>
-                </div>
-                <div class="graph-wrap">
-                    <svg class="eval-graph" id="evalGraph" role="img" aria-label="Evaluation graph"></svg>
-                    <div class="graph-tip hidden" id="graphTip"></div>
-                </div>
-                <div class="panel-footer hidden" id="retryFooter">
-                    <button id="retryButton" class="btn btn-primary">↻ Retry mistakes</button>
-                    <span class="muted" id="retryCount" style="font-size:13px"></span>
-                </div>
-            </div>
-
-            <div class="panel hidden" id="keyMomentsPanel">
-                <div class="panel-header">Key moments</div>
-                <div class="moments" id="keyMomentsList"></div>
-            </div>
-
-            <div class="panel moves-panel">
-                <div class="panel-header">Moves <span class="muted" id="movesHint">← → to step · move pieces to try your own lines</span></div>
-                <div class="moves-scroll" id="movesScroll">
-                    <div class="moves-grid" id="movesGrid"></div>
-                    <div class="moves-empty hidden" id="movesEmpty">No game loaded.</div>
-                </div>
-            </div>
-
-            <div class="panel" id="countsPanel">
-                <div class="panel-header">Move quality <span class="muted">White · Black</span></div>
-                <div style="padding: 6px 8px 8px">
-                    <table class="counts-table" id="countsTable"></table>
-                </div>
-                <div class="phase-row head"><span>Phase accuracy</span><span>Opening</span><span>Middle</span><span>End</span></div>
-                <div class="phase-row" id="phaseWhite"><span>White</span><span>–</span><span>–</span><span>–</span></div>
-                <div class="phase-row" id="phaseBlack" style="padding-bottom:16px"><span>Black</span><span>–</span><span>–</span><span>–</span></div>
-            </div>
-
-            <div class="panel" id="importPanel">
-                <div class="panel-header">Review another game</div>
-                <div class="panel-body">
-                    <textarea id="pgnInput" class="pgn-input" placeholder="Paste PGN or moves: 1. e4 e5 2. Nf3 Nc6 …"></textarea>
-                    <div style="display:flex; gap:8px; margin-top:10px">
-                        <button id="analyzePgnButton" class="btn btn-primary">Analyze</button>
-                        <a class="btn" href="game.html">Play a new game</a>
+                    <div class="retry-panel hidden" id="retryPanel">
+                        <div class="retry-head">
+                            <div>
+                                <div class="eyebrow">Fix your mistakes</div>
+                                <div class="retry-counter" id="retryCounter">1 / 1</div>
+                            </div>
+                            <button id="retryExitButton" class="btn btn-ghost btn-icon" title="Back to the review (Esc)" aria-label="Exit retry">✕</button>
+                        </div>
+                        <div class="retry-dots" id="retryDots"></div>
+                        <div class="retry-body">
+                            <div class="retry-task" id="retryTask"></div>
+                            <div class="retry-what" id="retryWhat"></div>
+                            <div class="retry-feedback hidden" id="retryFeedback"></div>
+                        </div>
+                        <div class="retry-actions" id="retryActions"></div>
                     </div>
-                </div>
+                </section>
             </div>
+
+            <footer class="side-nav review-nav">
+                <button class="btn" id="navStart" title="Start (Home)" aria-label="Go to start">⏮</button>
+                <button class="btn" id="navPrev" title="Previous (←)" aria-label="Previous move">◀</button>
+                <button class="btn" id="navNext" title="Next (→)" aria-label="Next move">▶</button>
+                <button class="btn" id="navEnd" title="End (End)" aria-label="Go to end">⏭</button>
+                <button class="btn" id="navFlip" title="Flip board (F)" aria-label="Flip board">⇅</button>
+            </footer>
         </aside>
     </main>
+
+    <!-- ── LOAD A GAME ───────────────────────────────────────────────────────── -->
+    <div id="loadModal" class="modal-overlay hidden">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loadTitle">
+            <h2 id="loadTitle">Review a game</h2>
+            <p class="modal-sub">Paste a PGN, or just the moves: 1. e4 e5 2. Nf3 Nc6 …</p>
+            <textarea id="pgnInput" class="pgn-input" placeholder="1. e4 e5 2. Nf3 Nc6 3. Bb5 …"></textarea>
+            <div class="modal-actions">
+                <button id="analyzePgnButton" class="btn btn-primary">Analyze</button>
+                <button id="cancelLoadButton" class="btn">Cancel</button>
+            </div>
+        </div>
+    </div>
 
 </body>
 </html>

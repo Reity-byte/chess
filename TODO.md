@@ -1067,7 +1067,35 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
-## 📋 NEXT SESSION PLAN — After-game experience & review page renovation
+## 🧭 Session 26 — Review page renovation + after-game card (the plan below, implemented)
+
+- **Review page = app shell** (`body.app-shell`, `.review-page`): no page scroll on desktop; board sized
+  from the window height; side panel (`.review-side`) of the same height with game header (accuracy
+  pair, result, opening, ⋯ menu with depth / load / copy / download PGN), coach caption (max 122 px),
+  tabs **Moves** (engine strip, 1 line ▾ 3 lines, + move list) · **Summary** (walk-through button, key
+  moments, move-quality chip grid, phase accuracy) · **Retry** (start card + trainer, red badge = your
+  mistakes), and pinned ⏮ ◀ ▶ ⏭ ⇅. Eval graph = strip under the board (click/drag to scrub). PGN import
+  is a "Load game" modal. Mobile (<960 px): one column, sticky nav bar. Measured: 1440×900 → 13 move
+  rows visible; 1366×768 → 9–10; 375 px → no horizontal scroll.
+- Review strips show captured pieces + material lead (`renderCaptured` moved to board-ui.js, shared
+  with the game page); move sounds when stepping/playing; `formatEval` never prints "-0.0".
+- **Walk-through** (only on request): coach-caption bar steps through key moments (◀ / Next moment /
+  ✕, "paused" + Resume when you wander off), ends with "Retry N mistakes".
+- **review-runner.js** (new, shared): `runReview(sanMoves, mode, callbacks)` worker pool (moved out of
+  analysis-page.js) + `loadCachedReview` / `saveCachedReview`. `reviewHistoryFields(report)` in
+  history-store.js (shared).
+- **Game-over card** (chess.com style): result, rating change, then a Quick review that starts the moment
+  the game ends fills in both accuracies, the move-grading counts (non-zero categories) and the biggest
+  swing; Game Review / ↻ Rematch (colors swapped, same level) / New game; Copy/Download PGN links. The
+  quick report is cached and written to the history entry.
+- **Instant review**: analysis.html shows the cached Quick report at once and refines to the chosen
+  mode in the background ("Refining to Standard… n of N"), swapping in place; the live engine waits.
+- Cache version `?v=16`. Dev note: `py -m http.server` sends no cache headers, so Chrome reuses files
+  — bump `?v=` for every CSS/JS change or the browser runs stale files.
+
+---
+
+## 📋 PLAN (done in Session 26) — After-game experience & review page renovation
 
 **User feedback (2026-10-25):** "the after game tab … just feels like you have to scroll down to see
 something — try to renovate it." Measured at 1440×900: board 680 px, but the review's side column is
@@ -1173,6 +1201,7 @@ I have a vanilla JS chess site:
   main/game/analysis.js, openings.js, analysis-worker.js   (Game Analysis Engine)
   main/game/puzzles.html, puzzles-page.js, puzzle-bank.js  (Puzzle Trainer)
   main/game/history.html, history-page.js, history-store.js  (game history + rating graph)
+  main/game/review-runner.js   (worker-pool game review + review cache, used by review and game pages)
 
 Please read TODO.md in the project root — Session 20 at the end summarizes the current architecture.
 ```

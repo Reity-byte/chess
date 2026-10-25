@@ -61,7 +61,8 @@ function formatEval(cp) {
         const n = mateInMoves(cp);
         return (n > 0 ? 'M' : '-M') + Math.abs(n);
     }
-    const v = cp / 100;
+    const v = Math.round(cp / 10) / 10;
+    if (v === 0) return '0.0'; // not "-0.0" for a tiny negative score
     return (v > 0 ? '+' : '') + v.toFixed(1);
 }
 
