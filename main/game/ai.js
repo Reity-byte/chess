@@ -1041,6 +1041,13 @@ function extractPV(first, maxLen) {
 //                      A move scoring at or below best − 2·evalNoise can never
 //                      win the draw, so those only get a cheap null-window
 //                      "is it below that line?" probe instead of an exact score
+//   blunder          – chance (0–1) that this move is a careless one: the engine
+//                      only notices some of its moves (GLANCE_NOTICE each) and
+//                      looks about half as deep — depth 0 (no replies at all)
+//                      for depth 1–2 levels. That is how people of a level go
+//                      wrong: hanging a piece, walking into a fork, overlooking
+//                      a free capture — errors noise alone can't make, since it
+//                      never picks a move more than 2·evalNoise below the best
 //   multiPV          – how many top moves get exact scores (default 1)
 //   includeMove/includePromo – a game move whose exact score is always computed
 //                      (the move actually played, for the Game Analysis Engine)
@@ -1049,9 +1056,11 @@ function extractPV(first, maxLen) {
 //   withLines        – also return SAN for the scored lines and the PV
 // Returns { move, promo, score, depth, nodes, lines:[{move,promo,san,score}],
 // includedScore, pv:[san] } — scores from the mover's view, mates ±(MATE-plies).
+const GLANCE_NOTICE = 0.6;
+
 function searchRoot(color, opts = {}) {
     const timeMs = opts.timeMs ?? 1000;
-    const maxDepth = Math.min(opts.maxDepth ?? 6, MAX_PLY - 2);
+    let maxDepth = Math.min(opts.maxDepth ?? 6, MAX_PLY - 2);
     const evalNoise = opts.evalNoise || 0;
     const multiPV = Math.max(1, opts.multiPV || 1);
 
@@ -1088,6 +1097,21 @@ function searchRoot(color, opts = {}) {
     scoreMoves(SCRATCH_BASE, n, 0, 0);
     let entries = rootMoves.map((m, i) => ({ m, score: -INF, exact: false, order: scoreBuf[SCRATCH_BASE + i], include: m === includeMove }));
     entries.sort((a, b) => b.order - a.order);
+
+    if (opts.blunder > 0 && !includeMove && Math.random() < opts.blunder) {
+        const noticed = entries.filter(() => Math.random() < GLANCE_NOTICE);
+        entries = noticed.length ? noticed : [entries[Math.floor(Math.random() * entries.length)]];
+        maxDepth = Math.min(2, (maxDepth - 1) >> 1);
+        if (maxDepth === 0) {
+            for (const e of entries) {
+                sbMake(e.m);
+                e.score = -evaluateSideToMove();
+                e.exact = true;
+                sbUnmake(e.m);
+            }
+            entries.sort((a, b) => b.score - a.score);
+        }
+    }
 
     const exactAll = multiPV >= entries.length;
     let completedDepth = 0;
@@ -1226,11 +1250,24 @@ function pickBookMove(color, playedSAN) {
 }
 
 
+// Shallow searches play endgames worse than middlegames: pawn races and king
+// walks lie beyond their horizon. With few pieces left a deeper search is
+// cheap, so depth-limited levels look further ahead as material comes off.
+// Non-pawn material of both sides, in pawns: 62 at the start.
+function endgameDepthBonus() {
+    const VALUE = { knight: 3, bishop: 3, rook: 5, queen: 9 };
+    let npm = 0;
+    for (const row of gameState) for (const p of row) if (p && VALUE[p.type]) npm += VALUE[p.type];
+    return npm <= 10 ? 2 : npm <= 20 ? 1 : 0;
+}
+
 // Book move or searched move for `color` -> { move, promo } (null move when
-// there is no legal move). `playedSAN` is the game so far as a flat SAN list.
-function findBestMove(color, timeBudgetMs, maxDepth, evalNoise = 0, playedSAN = []) {
+// there is no legal move). `level` = { timeMs, maxDepth, evalNoise, blunder }
+// (see searchRoot); `playedSAN` is the game so far as a flat SAN list.
+function findBestMove(color, level, playedSAN = []) {
     const bookMove = pickBookMove(color, playedSAN);
     if (bookMove) return { move: bookMove, promo: null };
-    const r = searchRoot(color, { timeMs: timeBudgetMs, maxDepth, evalNoise });
+    const maxDepth = level.maxDepth < 16 ? level.maxDepth + endgameDepthBonus() : level.maxDepth;
+    const r = searchRoot(color, { timeMs: level.timeMs, maxDepth, evalNoise: level.evalNoise, blunder: level.blunder });
     return { move: r.move, promo: r.promo };
 }

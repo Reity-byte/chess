@@ -1011,6 +1011,32 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 🎯 Session 24 — Human-like engine weakness
+
+- **Problem (user report):** vs the engine, games went "you're better early → engine crushes the
+  middlegame → you win the endgame". Measured: uniform eval noise (±N cp) let weak levels play loose
+  quiet moves in openings/endgames (22–38% of opening moves lost 60–300 cp at ≈940–1280), but it can
+  never pick a move > 2N below the best, so they never hung pieces and grabbed every one of yours.
+  Endgames were the weakest phase (shallow horizon).
+- **Fix (ai.js):** `searchRoot` option `blunder` = chance of a *careless move*: only ~60% of root moves
+  are noticed (`GLANCE_NOTICE`) and the search depth is about halved — depth 0 (static eval, no replies)
+  for depth 1–2 levels. Produces hung pieces, walked-into forks and missed captures, mostly in the
+  middlegame like human errors. Noise values were cut. `findBestMove(color, level, playedSAN)` now takes
+  `{ timeMs, maxDepth, evalNoise, blunder }` and adds `endgameDepthBonus()` (+1 ply at ≤ 20 pawns of
+  non-pawn material, +2 at ≤ 10) for depth-limited levels. Re-measured per phase: opening/endgame losses
+  dropped (≈800: endgame avg loss 122 → 45 cp), errors now concentrate in the middlegame.
+- **Harness bug fixed (tests/lib.js):** `makePlayer` passed an empty move list to the opening book, so in
+  calibration/match games the engine played a random "first move" (e4/d4/Nf3/c4) whenever one was
+  legal, mid-game. That compressed the old ratings. Live games were never affected.
+- **Calibration:** results now persist in `tests/calibration.json` (keyed by both levels' settings);
+  `--pairs` reruns combine with stored results, `--add` pools extra games, `--fresh` starts over, and the
+  chain is scaled from `ENGINE_RATING_ANCHOR` 400 to `ENGINE_RATING_TOP` 2300 (self-play inflates gaps;
+  raw chain was 400–2900). New level 0 scored even (+36 −34 =10) vs the old 400 level. 14 levels:
+  400, 580, 730, 960, 1130, 1230, 1360, 1440, 1530, 1580, 1710, 1840, 2060, 2300.
+- Cache version `?v=10`.
+
+---
+
 ## Paste this into a new session to continue:
 
 ```

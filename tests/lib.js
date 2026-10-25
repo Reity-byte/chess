@@ -88,18 +88,24 @@ const MATCH_OPENINGS = [
     ['e4', 'c6'], ['Nf3', 'd5'], ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'], ['d4', 'd5', 'c4', 'e6'], ['e4', 'd5'],
 ];
 
-// A player = an engine context + search settings { timeMs, maxDepth, evalNoise }.
+// A player = an engine context + search settings { timeMs, maxDepth, evalNoise, blunder }.
 function makePlayer(engine, cfg) {
     const { run } = engine;
+    const level = JSON.stringify({ timeMs: cfg.timeMs, maxDepth: cfg.maxDepth, evalNoise: cfg.evalNoise || 0, blunder: cfg.blunder || 0 });
+    // Revisions before the careless-move model took the settings as separate arguments.
+    // The opening book matches the game's move list, so pass the real one (with
+    // an empty list it would "find" first moves like e4 in any position).
+    const call = run('findBestMove.length') === 2 ? `findBestMove(currentTurn, ${level}, __played)`
+        : `findBestMove(currentTurn, ${cfg.timeMs}, ${cfg.maxDepth}, ${cfg.evalNoise || 0}, __played)`;
     return {
-        reset: () => run('resetGame(); recordPosition(); clearSearchMemory();'),
+        reset: () => run('resetGame(); recordPosition(); clearSearchMemory(); var __played = [];'),
         think: () => run(`(() => {
-            const r = findBestMove(currentTurn, ${cfg.timeMs}, ${cfg.maxDepth}, ${cfg.evalNoise || 0}, []);
+            const r = ${call};
             const isPromo = gameState[r.move.fromY][r.move.fromX].type === 'pawn' && (r.move.toY === 0 || r.move.toY === 7);
             return moveToSAN(r.move.fromX, r.move.fromY, r.move.toX, r.move.toY, r.move.details, isPromo ? (r.promo || 'queen') : null);
         })()`),
         play: (san) => run(`(() => { const r = resolveSAN(currentTurn, ${JSON.stringify(san)}); if (!r) return false;
-            applyMoveWithPromotion(r.move, r.promo); recordPosition(); return true; })()`),
+            applyMoveWithPromotion(r.move, r.promo); recordPosition(); __played.push(${JSON.stringify(san)}); return true; })()`),
         status: () => run('getGameStatus()'),
     };
 }

@@ -4,7 +4,7 @@
 // game from its SAN move list: when a request extends the moves it already
 // knows, only the new moves are played; anything else (new game, takeback)
 // triggers a full replay. Its transposition table survives between moves.
-importScripts('engine.js?v=9', 'ai.js?v=9', 'notation.js?v=9');
+importScripts('engine.js?v=10', 'ai.js?v=10', 'notation.js?v=10');
 
 let knownSAN = [];
 
@@ -36,7 +36,7 @@ self.onmessage = (e) => {
             knownSAN = [];
         } else if (d.type === 'think') {
             syncTo(d.sanMoves);
-            const r = findBestMove(currentTurn, d.timeMs, d.maxDepth, d.evalNoise, d.sanMoves);
+            const r = findBestMove(currentTurn, d.level, d.sanMoves);
             const m = r.move;
             self.postMessage({
                 type: 'move', id: d.id,

@@ -124,7 +124,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=9');
+            this.worker = new Worker('ai-worker.js?v=10');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -162,7 +162,7 @@ const engineClient = {
             const id = this.nextId++;
             const runLocally = () => setTimeout(() => {
                 try {
-                    resolve(findBestMove(currentTurn, params.timeMs, params.maxDepth, params.evalNoise, params.sanMoves));
+                    resolve(findBestMove(currentTurn, params.level, params.sanMoves));
                 } catch (err) { reject(err); }
             }, 30);
             if (!this.worker) { runLocally(); return; }
@@ -432,7 +432,8 @@ async function playEngineMove() {
     let result;
     try {
         result = await engineClient.think({
-            sanMoves: sanList(), timeMs: aiTimeBudget(), maxDepth: level.maxDepth, evalNoise: level.evalNoise,
+            sanMoves: sanList(),
+            level: { timeMs: aiTimeBudget(), maxDepth: level.maxDepth, evalNoise: level.evalNoise, blunder: level.blunder },
         });
     } catch (err) {
         console.error(err);

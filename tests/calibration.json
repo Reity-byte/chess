@@ -1,0 +1,80 @@
+{
+  "depth 1, noise 300, blunder 0.35 → depth 1, noise 200, blunder 0.25": {
+    "wins": 75,
+    "losses": 15,
+    "draws": 10,
+    "games": 100
+  },
+  "depth 1, noise 200, blunder 0.25 → depth 1, noise 120, blunder 0.15": {
+    "wins": 71,
+    "losses": 21,
+    "draws": 8,
+    "games": 100
+  },
+  "depth 1, noise 120, blunder 0.15 → depth 2, noise 100, blunder 0.12": {
+    "wins": 81,
+    "losses": 10,
+    "draws": 9,
+    "games": 100
+  },
+  "depth 2, noise 100, blunder 0.12 → depth 2, noise 60, blunder 0.07": {
+    "wins": 76,
+    "losses": 21,
+    "draws": 3,
+    "games": 100
+  },
+  "depth 2, noise 60, blunder 0.07 → depth 3, noise 100, blunder 0.25": {
+    "wins": 63,
+    "losses": 27,
+    "draws": 10,
+    "games": 100
+  },
+  "depth 3, noise 100, blunder 0.25 → depth 3, noise 70, blunder 0.14": {
+    "wins": 69,
+    "losses": 22,
+    "draws": 9,
+    "games": 100
+  },
+  "depth 3, noise 70, blunder 0.14 → depth 3, noise 50, blunder 0.07": {
+    "wins": 59,
+    "losses": 31,
+    "draws": 10,
+    "games": 100
+  },
+  "depth 3, noise 50, blunder 0.07 → depth 3, noise 35, blunder 0.04": {
+    "wins": 63,
+    "losses": 30,
+    "draws": 7,
+    "games": 100
+  },
+  "depth 4, noise 25, blunder 0.03 → depth 5, noise 20, blunder 0.015": {
+    "wins": 65,
+    "losses": 18,
+    "draws": 17,
+    "games": 100
+  },
+  "depth 5, noise 20, blunder 0.015 → depth 6, noise 10, blunder 0.005": {
+    "wins": 75,
+    "losses": 7,
+    "draws": 18,
+    "games": 100
+  },
+  "depth 6, noise 10, blunder 0.005 → depth full, noise 0, blunder 0": {
+    "wins": 60,
+    "losses": 3,
+    "draws": 17,
+    "games": 80
+  },
+  "depth 3, noise 35, blunder 0.04 → depth 4, noise 45, blunder 0.13": {
+    "wins": 54,
+    "losses": 35,
+    "draws": 11,
+    "games": 100
+  },
+  "depth 4, noise 45, blunder 0.13 → depth 4, noise 25, blunder 0.03": {
+    "wins": 68,
+    "losses": 22,
+    "draws": 10,
+    "games": 100
+  }
+}

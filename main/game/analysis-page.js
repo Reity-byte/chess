@@ -238,7 +238,7 @@ function analysisFailed(message) {
 
 function createWorker(run) {
     let w;
-    try { w = new Worker('analysis-worker.js?v=9'); } catch (e) { return null; }
+    try { w = new Worker('analysis-worker.js?v=10'); } catch (e) { return null; }
     const current = () => run === analysisRun;
     w.onmessage = (e) => {
         const d = e.data;
