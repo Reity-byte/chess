@@ -33,17 +33,40 @@ function addGameToHistory(record) {
 }
 
 // The headline numbers of a finished review (analysis-worker report) as stored
-// on a history game: accuracy, and per side the category counts and the kinds of
-// mistakes made (motifs of moves that cost at least 5% winning chances).
+// on a history game: accuracy (overall and by phase), and per side the category
+// counts, the kinds of mistakes made (motifs of moves that cost at least 5%
+// winning chances) and the mistakes themselves (for the Trainer's practice list).
+const MISTAKE_CATEGORIES = ['Mistake', 'Miss', 'Blunder'];
+
 function reviewHistoryFields(report) {
     const side = (color) => {
         const motifs = {};
+        const mistakes = [];
         for (const m of report.perMove) {
-            if (m.color === color && m.motif && m.winLoss >= 5) motifs[m.motif] = (motifs[m.motif] || 0) + 1;
+            if (m.color !== color) continue;
+            if (m.motif && m.winLoss >= 5) motifs[m.motif] = (motifs[m.motif] || 0) + 1;
+            if (MISTAKE_CATEGORIES.includes(m.category) && m.bestMove) {
+                mistakes.push({ ply: m.ply, san: m.san, category: m.category, motif: m.motif || null, reason: m.reason || null, winLoss: m.winLoss });
+            }
         }
-        return { counts: report.counts[color], motifs };
+        return { counts: report.counts[color], motifs, mistakes };
     };
-    return { accuracy: report.accuracy, reviewMode: report.mode, review: { white: side('white'), black: side('black') } };
+    return {
+        accuracy: report.accuracy, phaseAccuracy: report.phaseAccuracy || null, reviewMode: report.mode,
+        review: { white: side('white'), black: side('black') },
+    };
+}
+
+// Hands a stored game to the review page and goes there. `extra` may ask it to
+// start Retry mistakes ({ retry: true, retryPly }).
+function openGameReview(g, extra = {}) {
+    const plainName = (n) => /^You\b/.test(n || '') ? 'You' : n;
+    try {
+        localStorage.setItem('chessGameForAnalysis', JSON.stringify({
+            sanMoves: g.sanMoves, white: plainName(g.white), black: plainName(g.black), result: g.result, historyId: g.id, ...extra,
+        }));
+    } catch (e) { return; }
+    location.href = 'analysis.html';
 }
 
 // Merges `fields` into the stored game `id` (no-op if it's gone).

@@ -79,6 +79,16 @@ t.check(ERRORS.includes(quiet.category) && quiet.bestMove && quiet.bestMove.san 
 const hangs = worker.judgeMove(['e4', 'e5', 'Qh5', 'Nc6'], 'Qxe5+');
 t.check(hangs.motif === 'hangs', `3.Qxe5+ judged with a reason: "${hangs.reason}"`);
 
+// ── Hints (game page 💡) ──────────────────────────────────────────────────────
+console.log('\nHints');
+const hintFor = (moves) => worker.run(`runHint(${JSON.stringify(moves.split(' '))})`);
+const mateHint = hintFor('f3 e5 g4');
+t.check(mateHint.san === 'Qh4#' && /mate in 1/.test(mateHint.clue), `mate in 1 found with a mate clue: ${mateHint.san} "${mateHint.clue}"`);
+const threatHint = hintFor('e4 e5 Bc4 Nc6 Qh5');
+t.check(/threatens mate/.test(threatHint.clue), `Scholar's-mate threat spotted: ${threatHint.san} "${threatHint.clue}"`);
+const winHint = hintFor('e4 e5 Nf3 d6 Bc4 Bg4 Nc3 g6');
+t.check(winHint.san === 'Nxe5' && !winHint.clue.includes(winHint.san), `finds Nxe5 and the clue doesn't give it away: "${winHint.clue}"`);
+
 // ── Live engine panel ─────────────────────────────────────────────────────────
 console.log('\nLive analysis');
 const updates = worker.live(['f3', 'e5', 'g4']);

@@ -21,7 +21,7 @@ const MIN_RATED_PLIES = 4;     // games aborted before this many moves don't cou
 // timeByMode remembers the last time control picked in each mode.
 // First visit: the opponent nearest your rating; engines watch at a strong level.
 const settings = Object.assign(
-    { mode: 'human', color: 'white', time: 'unlimited', level: null, timeByMode: {},
+    { mode: 'human', color: 'white', time: 'unlimited', level: null, timeByMode: {}, coach: 'off',
       whiteLevel: ENGINE_LEVELS.length - 4, blackLevel: ENGINE_LEVELS.length - 4 },
     loadJSON(SETUP_KEY) || {});
 // A control saved by an older version that no mode offers: that mode's default.
@@ -105,7 +105,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=18');
+            this.worker = new Worker('ai-worker.js?v=21');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -212,6 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
     $('resignButton').addEventListener('click', resign);
     $('offerDrawButton').addEventListener('click', offerDraw);
     $('takebackButton').addEventListener('click', takeback);
+    $('hintButton').addEventListener('click', requestHint);
 
     // Landing-page links preselect the setup (?mode=human|ai&difficulty=...);
     // ?resume=1 continues the saved in-progress game.
@@ -219,6 +220,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (params.get('mode') === 'human' || params.get('mode') === 'ai') settings.mode = params.get('mode');
     const legacy = LEGACY_DIFFICULTY_LEVEL[params.get('difficulty')];
     if (legacy !== undefined) settings.level = legacy;
+    // The Trainer's suggested game: ?level=<ENGINE_LEVELS index>&time=<control>.
+    const level = parseInt(params.get('level'), 10);
+    if (ENGINE_LEVELS[level]) { settings.mode = 'human'; settings.level = level; }
+    const time = params.get('time');
+    if (TIME_MODES.some(m => m.controls.includes(time))) settings.time = time;
+    if (params.get('coach') === 'on') { settings.mode = 'human'; settings.coach = 'on'; }
 
     let resumeData = null;
     if (params.get('resume') === '1') {
@@ -301,6 +308,7 @@ function syncSetupUI() {
     });
     syncTimeControls();
     document.getElementById('colorChoiceRow').classList.toggle('hidden', settings.mode === 'ai');
+    document.getElementById('coachRow').classList.toggle('hidden', settings.mode === 'ai');
     document.getElementById('strengthHuman').classList.toggle('hidden', settings.mode === 'ai');
     document.getElementById('strengthAi').classList.toggle('hidden', settings.mode !== 'ai');
 
@@ -336,6 +344,7 @@ function openSetup() {
 function startGame(resumeData) {
     gameToken++;
     cancelGamePreview();
+    let coach = false; // Coach mode for this game (see coach.js)
     engineClient.newGame();
     stopClock();
 
@@ -351,6 +360,7 @@ function startGame(resumeData) {
             engineLevels = { white: null, black: null, [other(playerColor)]: legacy };
         }
         rated = resumeData.rated === true;
+        coach = resumeData.coach === true && gameMode === 'human';
     } else {
         gameMode = settings.mode;
         playerColor = gameMode === 'ai' ? 'white'
@@ -358,9 +368,11 @@ function startGame(resumeData) {
         engineLevels = gameMode === 'ai'
             ? { white: settings.whiteLevel, black: settings.blackLevel }
             : { white: null, black: null, [other(playerColor)]: settings.level };
-        rated = gameMode === 'human';
+        coach = gameMode === 'human' && settings.coach === 'on';
+        rated = gameMode === 'human' && !coach; // coached games are practice
         timeControl = settings.time;
     }
+    resetCoach(coach);
     ratingChange = null;
     lastGameId = null;
     isFlipped = playerColor === 'black';
@@ -418,6 +430,8 @@ function commitMove(move, promo) {
     renderMoves();
     updatePlayers();
     saveInProgressGame();
+
+    if (gameMode === 'human' && color === playerColor) coachAfterMove(sanList().slice(0, -1), san);
 
     const status = getGameStatus();
     if (status) { endGame(status); return; }
@@ -510,6 +524,8 @@ function endGame(status) {
     updatePlayers();
     updateStatus(status);
     updateClockDisplay();
+    clearHint();
+    if (coachOn) showCoach({ title: 'Game over', line: 'How your moves were graded this game:', tally: true });
     startGamePreview(sans);
     setTimeout(() => showGameOverModal(status), 450);
 }
@@ -522,7 +538,8 @@ function rematch() {
     const levels = human
         ? { white: null, black: null, [other(color)]: engineLevels[other(playerColor)] }
         : { white: engineLevels.black, black: engineLevels.white };
-    startGame({ gameMode, playerColor: color, selectedTimeControl: timeControl, engineLevels: levels, rated: human, moveHistory: [], clock: null });
+    startGame({ gameMode, playerColor: color, selectedTimeControl: timeControl, engineLevels: levels,
+                rated: human && !coachOn, coach: coachOn, moveHistory: [], clock: null });
 }
 
 // ─── PLAYERS, CAPTURES, STATUS ─────────────────────────────────────────────────
@@ -569,7 +586,7 @@ function updateStatus(finalStatus) {
     if (gameMode === 'ai' && levelOf('white') && levelOf('black')) {
         chip.textContent = `≈${levelOf('white').rating} vs ≈${levelOf('black').rating} · ${timeControlTitle(timeControl)}`;
     } else if (opponent) {
-        chip.textContent = `Engine ≈${opponent.rating} · ${timeControlTitle(timeControl)} · ${rated ? 'rated' : 'unrated'}`;
+        chip.textContent = `Engine ≈${opponent.rating} · ${timeControlTitle(timeControl)} · ${rated ? 'rated' : coachOn ? 'coach' : 'unrated'}`;
     } else {
         chip.hidden = true; // no game set up yet
     }
@@ -607,6 +624,7 @@ function updateStatus(finalStatus) {
     document.getElementById('takebackButton').disabled = !canAct || sanList().length === 0;
     document.getElementById('offerDrawButton').disabled = !canAct || aiThinking;
     document.getElementById('resignButton').disabled = !canAct;
+    syncHintButton();
 }
 
 function resultHeadline(result) {
@@ -743,6 +761,8 @@ function takeback() {
 
     replaySANFromStart(list);
     moveHistory = rowsFromSAN(list);
+    clearHint();
+    board.setBadge(null);
     board.clearSelection();
     board.render(gameState);
     syncBoardMarks();
@@ -758,7 +778,7 @@ function saveInProgressGame() {
     if (!gameActive || gameMode !== 'human') return;
     try {
         localStorage.setItem(INPROGRESS_KEY, JSON.stringify({
-            moveHistory, gameMode, playerColor, engineLevels, rated, selectedTimeControl: timeControl,
+            moveHistory, gameMode, playerColor, engineLevels, rated, coach: coachOn, selectedTimeControl: timeControl,
             clock: clockState ? { white: clockState.white, black: clockState.black, incrementMs: clockState.incrementMs } : null,
         }));
     } catch (e) { /* storage full or unavailable: resume just won't be offered */ }

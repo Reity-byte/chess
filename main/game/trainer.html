@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trainer · Chess</title>
+    <link rel="stylesheet" href="../theme.css?v=21">
+    <link rel="stylesheet" href="../pieces.css?v=21">
+    <script src="../style-settings.js?v=21"></script>
+    <link rel="stylesheet" href="game.css?v=21">
+    <script src="analysis.js?v=21" defer></script>
+    <script src="strength.js?v=21" defer></script>
+    <script src="history-store.js?v=21" defer></script>
+    <script src="ratings.js?v=21" defer></script>
+    <script src="trainer-page.js?v=21" defer></script>
+</head>
+<body>
+
+    <header class="topbar">
+        <a class="brand" href="../site.html">
+            <span class="brand-mark"><span class="piece-icon white knight"></span></span>
+            <span class="brand-name">Chess</span>
+        </a>
+        <nav class="topnav">
+            <a href="game.html">Play</a>
+            <a href="analysis.html">Review</a>
+            <a href="puzzles.html">Puzzles</a>
+            <a href="history.html">History</a>
+            <a href="trainer.html" class="active">Train</a>
+        </nav>
+        <div class="topbar-right">
+        </div>
+    </header>
+
+    <main class="trainer-page">
+        <section class="trainer-hero">
+            <div>
+                <div class="eyebrow">Your training plan</div>
+                <h1 id="planTitle">Let's find what to work on</h1>
+                <p class="muted" id="planSub"></p>
+            </div>
+            <div class="trainer-ratings" id="ratingTiles"></div>
+        </section>
+
+        <section class="trainer-section">
+            <h2>Focus areas</h2>
+            <div class="focus-grid" id="focusList"></div>
+        </section>
+
+        <section class="trainer-columns">
+            <div class="panel">
+                <div class="panel-header">Practise your own mistakes <span class="muted" id="practiceCount"></span></div>
+                <div class="practice-list" id="practiceList"></div>
+            </div>
+            <div class="trainer-side">
+                <div class="panel">
+                    <div class="panel-header">Your numbers</div>
+                    <div class="number-grid" id="numberGrid"></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">Next game</div>
+                    <div class="panel-body" id="nextGame"></div>
+                </div>
+                <div class="panel hidden" id="unreviewedPanel">
+                    <div class="panel-header">Not reviewed yet <span class="muted" id="unreviewedCount"></span></div>
+                    <div class="practice-list" id="unreviewedList"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+</body>
+</html>

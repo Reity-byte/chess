@@ -34,6 +34,7 @@ let cursor = null;      // null = the game at selectedPly, else the { id, index 
 let nextVariationId = 1;
 let puzzle = null;      // { ply, target, solved }
 let retry = null;       // see RETRY MISTAKES
+let pendingRetry = null; // { ply } — start Retry once the review is ready (asked for by the Trainer)
 
 const $ = (id) => document.getElementById(id);
 
@@ -99,6 +100,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Older versions stored a bare SAN array.
     if (Array.isArray(handoff)) handoff = { sanMoves: handoff };
     if (handoff && Array.isArray(handoff.sanMoves) && handoff.sanMoves.length) {
+        // The Trainer can ask for Retry mistakes to start (once — the flag is
+        // dropped so a later visit opens the review normally).
+        if (handoff.retry) {
+            pendingRetry = { ply: Number.isInteger(handoff.retryPly) ? handoff.retryPly : null };
+            const { retry: _r, retryPly: _p, ...rest } = handoff;
+            try { localStorage.setItem(HANDOFF_KEY, JSON.stringify(rest)); } catch (e) { /* fine */ }
+        }
         loadGame(handoff);
     } else {
         showEmptyState();
@@ -333,6 +341,15 @@ function finishAnalysis(finished, fromCache) {
     }
     if (game.historyId) saveReviewToHistory(finished);
     updatePlayerStrips();
+    if (pendingRetry) {
+        const wanted = pendingRetry.ply;
+        pendingRetry = null;
+        if (retryPlies().length) {
+            startRetry();
+            const i = retry.plies.indexOf(wanted);
+            if (i > 0) showRetryItem(i);
+        }
+    }
 }
 
 function setProgress(done, total, depth) {
@@ -1220,7 +1237,7 @@ function startLive() {
             const run = liveRun;
             liveTimer = setTimeout(() => {
                 if (run !== liveRun) return;
-                try { liveWorker = new Worker('analysis-worker.js?v=18'); } catch (e) { return; }
+                try { liveWorker = new Worker('analysis-worker.js?v=21'); } catch (e) { return; }
                 liveWorker.onmessage = (e) => {
                     const d = e.data;
                     if (run !== liveRun || d.type !== 'live') return;
@@ -1306,7 +1323,7 @@ const judgeWaiting = new Map();
 
 function judgeMove(sanMoves, san) {
     if (!judgeWorker) {
-        try { judgeWorker = new Worker('analysis-worker.js?v=18'); } catch (e) { return Promise.reject(e); }
+        try { judgeWorker = new Worker('analysis-worker.js?v=21'); } catch (e) { return Promise.reject(e); }
         judgeWorker.onmessage = (e) => {
             const d = e.data;
             const waiting = judgeWaiting.get(d.requestId);

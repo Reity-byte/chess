@@ -1095,6 +1095,33 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 🎓 Session 28 — Hints, Coach mode and the Trainer page
+
+- **💡 Hint** (game page, any game vs the engine): first press highlights the piece and gives a clue
+  that doesn't name the move, second press shows the move as an arrow; using one makes the game
+  unrated (toast, like takebacks). Worker `hint` message → `runHint(sanMoves)` in analysis-worker.js:
+  best move (900 ms) + clue in priority order — forced mate · fork (`forkAfter`) · material won along the
+  line · get out of check · the moving piece is hanging (`piecesInDanger`) · the opponent's threat via a
+  null-move search (`opponentThreat`: mate / material) · something under attack · worse position ·
+  capture / quiet move.
+- **Coach mode** (setup option, vs engine only, unrated, kept on rematch and resume): after each of your
+  moves the coach card grades it with `judgeMove` (same category/reason/better move as the review) while
+  the engine thinks, badges it on the board if still the latest move, and keeps a tally; at the end it
+  shows the game's tally. `coach.js` (game page) owns the coach worker, the card and the hint state.
+- **Trainer page** (`trainer.html` + `trainer-page.js`, "Train" in every nav): rating tiles per mode;
+  up to 4 focus areas from your last 20 reviewed games (most frequent motifs with tips, weakest phase if
+  ≥ 8 points behind, blunders per game ≥ 1) with buttons that open the review straight into Retry at
+  that mistake; a practice list of your own mistakes; your numbers (accuracy trend, blunders/game, last
+  10 results, reviewed share); a suggested next game (level nearest your most-played mode's rating, ±1
+  after a ≥ 60% / ≤ 30% streak) with Play it / With Coach links; unreviewed games.
+- Reviews now also store `phaseAccuracy` and per-side `mistakes` on history games
+  (`reviewHistoryFields`); `openGameReview(g, { retry, retryPly })` in history-store.js; the review page
+  starts Retry when the handoff asks (flag dropped after one use). Game page accepts
+  `?level=&time=&coach=on`.
+- Tests: hint clues (mate, mate threat, win without naming the move). Cache version `?v=21`.
+
+---
+
 ## ⏱️ Session 27 — Time modes (Bullet / Blitz / Rapid / Unlimited) with a rating each
 
 - `main/game/ratings.js` (new, shared by game + history pages): `TIME_MODES` — Bullet 1|0 1|1 2|1 ·
@@ -1218,6 +1245,8 @@ I have a vanilla JS chess site:
   main/game/ai.js         (0x88 search board + PVS search; searchRoot()/findBestMove())
   main/game/strength.js   (calibrated engine strength ladder; tests/calibrate.js measures it)
   main/game/ratings.js    (time modes Bullet/Blitz/Rapid/Unlimited + the player rating per mode)
+  main/game/coach.js      (game page: 💡 hints and Coach mode grading)
+  main/game/trainer.html, trainer-page.js   (Trainer: focus areas, practice list, next game)
   main/game/ai-worker.js  (live-game engine worker)
   main/game/notation.js   (SAN generation + resolveSAN/replaySANFromStart)
   main/game/analysis.html, analysis-page.js   (Game Review page)

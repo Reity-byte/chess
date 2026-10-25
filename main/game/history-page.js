@@ -3,7 +3,6 @@
 // most common error from reviewed games, and the list of finished games with a
 // one-click review. Data comes from history-store.js, and the player's rating
 // per time mode (Bullet / Blitz / Rapid / Unlimited) from ratings.js.
-const ANALYSIS_HANDOFF_KEY = 'chessGameForAnalysis';
 
 const MOTIF_LABELS = {
     allowsMate: 'Allowing mate',
@@ -214,11 +213,5 @@ function renderGames() {
 }
 
 function openReview(g) {
-    const plainName = (n) => /^You\b/.test(n) ? 'You' : n;
-    try {
-        localStorage.setItem(ANALYSIS_HANDOFF_KEY, JSON.stringify({
-            sanMoves: g.sanMoves, white: plainName(g.white), black: plainName(g.black), result: g.result, historyId: g.id,
-        }));
-    } catch (e) { return; }
-    location.href = 'analysis.html';
+    openGameReview(g);
 }

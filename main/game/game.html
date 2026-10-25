@@ -4,22 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Play · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=18">
-    <link rel="stylesheet" href="../pieces.css?v=18">
-    <script src="../style-settings.js?v=18"></script>
-    <link rel="stylesheet" href="game.css?v=18">
-    <script src="engine.js?v=18" defer></script>
-    <script src="ai.js?v=18" defer></script>
-    <script src="notation.js?v=18" defer></script>
-    <script src="openings.js?v=18" defer></script>
-    <script src="strength.js?v=18" defer></script>
-    <script src="sound.js?v=18" defer></script>
-    <script src="board-ui.js?v=18" defer></script>
-    <script src="analysis.js?v=18" defer></script>
-    <script src="history-store.js?v=18" defer></script>
-    <script src="ratings.js?v=18" defer></script>
-    <script src="review-runner.js?v=18" defer></script>
-    <script src="game-script.js?v=18" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=21">
+    <link rel="stylesheet" href="../pieces.css?v=21">
+    <script src="../style-settings.js?v=21"></script>
+    <link rel="stylesheet" href="game.css?v=21">
+    <script src="engine.js?v=21" defer></script>
+    <script src="ai.js?v=21" defer></script>
+    <script src="notation.js?v=21" defer></script>
+    <script src="openings.js?v=21" defer></script>
+    <script src="strength.js?v=21" defer></script>
+    <script src="sound.js?v=21" defer></script>
+    <script src="board-ui.js?v=21" defer></script>
+    <script src="analysis.js?v=21" defer></script>
+    <script src="history-store.js?v=21" defer></script>
+    <script src="ratings.js?v=21" defer></script>
+    <script src="review-runner.js?v=21" defer></script>
+    <script src="coach.js?v=21" defer></script>
+    <script src="game-script.js?v=21" defer></script>
 </head>
 <body>
 
@@ -33,6 +34,7 @@
             <a href="analysis.html">Review</a>
             <a href="puzzles.html">Puzzles</a>
             <a href="history.html">History</a>
+            <a href="trainer.html">Train</a>
         </nav>
         <div class="topbar-right">
             <button id="soundToggleButton" class="btn btn-ghost btn-icon" aria-label="Mute sound">🔊</button>
@@ -72,6 +74,15 @@
                 <span class="chip" id="levelChip" style="margin-left:auto" hidden></span>
             </div>
 
+            <div class="panel coach-card hidden" id="coachCard" aria-live="polite">
+                <div class="caption-icon" id="coachIcon">🎓</div>
+                <div class="coach-body">
+                    <div class="coach-title" id="coachTitle"></div>
+                    <div class="caption-line" id="coachLine"></div>
+                    <div class="coach-tally hidden" id="coachTally"></div>
+                </div>
+            </div>
+
             <div class="panel moves-panel">
                 <div class="panel-header">Moves <span class="muted" id="openingName"></span></div>
                 <div class="moves-scroll" id="movesScroll">
@@ -79,6 +90,7 @@
                     <div class="moves-empty" id="movesEmpty">No moves yet.</div>
                 </div>
                 <div class="action-grid" id="liveActions">
+                    <button class="btn" id="hintButton" title="Hint: first the piece, then the move (the game becomes unrated)">💡 Hint</button>
                     <button class="btn" id="takebackButton" title="Take back your last move">↶ Takeback</button>
                     <button class="btn" id="offerDrawButton">½ Draw</button>
                     <button class="btn btn-danger" id="resignButton">⚑ Resign</button>
@@ -111,6 +123,14 @@
                     <button data-value="white" class="selected">White</button>
                     <button data-value="random">Random</button>
                     <button data-value="black">Black</button>
+                </div>
+            </div>
+
+            <div id="coachRow">
+                <div class="eyebrow field-label">Coach</div>
+                <div class="segmented" data-group="coach">
+                    <button data-value="off" class="selected">Off<small>rated game</small></button>
+                    <button data-value="on">🎓 Coach on<small>grades every move · unrated</small></button>
                 </div>
             </div>
 

@@ -11,12 +11,14 @@
 // comparing two searches of different depth. The next position's search then
 // supplies the eval graph point after the move and the opponent's best reply
 // (the "punish" move for puzzles). Results stream back move by move.
-importScripts('engine.js?v=18', 'ai.js?v=18', 'notation.js?v=18', 'openings.js?v=18', 'analysis.js?v=18');
+importScripts('engine.js?v=21', 'ai.js?v=21', 'notation.js?v=21', 'openings.js?v=21', 'analysis.js?v=21');
 
 // Single moves judged on the review page (variations, retries) and the live
 // engine panel always search at full strength, whatever level the game was
 // played at.
 const JUDGE_MODE = { timeMs: 700, maxDepth: 20 };
+const HINT_MODE = { timeMs: 900, maxDepth: 20 };
+const THREAT_MODE = { timeMs: 300, maxDepth: 12 };  // the opponent's "free move" in a hint
 const LIVE_LINES = 3;
 const LIVE_MAX_MS = 20000;
 const LIVE_MAX_DEPTH = 30;
@@ -509,6 +511,69 @@ function runJudgeMove(sanMoves, san) {
     return entries[0];
 }
 
+// ─── HINTS ─────────────────────────────────────────────────────────────────────
+// The game page's 💡 Hint: the best move in the position after `sanMoves`, plus
+// a clue about what it does that doesn't name the move. Returns null when the
+// game is over.
+function runHint(sanMoves) {
+    const restore = () => replaySANFromStart(sanMoves);
+    restore();
+    const color = currentTurn, enemy = color === 'white' ? 'black' : 'white';
+    if (!hasAnyLegalMove(color)) return null;
+    const res = searchPosition(HINT_MODE, null);
+    const best = res.lines[0];
+    if (!best) return null;
+    const piece = gameState[best.move.fromY][best.move.fromX].type;
+    let clue;
+    if (res.score >= EVAL_MATE_BOUND) {
+        clue = `There's a forced mate in ${mateInMoves(res.score)}.`;
+    } else {
+        const gain = lineMaterialDelta(res.pv, color, LINE_PLIES);
+        restore();
+        const fork = forkAfter(best.move, res.pv.slice(1));
+        restore();
+        const danger = piecesInDanger(color, enemy);
+        const threat = isInCheck(color) ? null : opponentThreat(enemy);
+        restore();
+        if (fork.length) clue = 'There is a fork.';
+        else if (gain >= EXPLAIN_MATERIAL) clue = `You can win ${materialWord(gain)}.`;
+        else if (isInCheck(color)) clue = 'Get out of check — but pick the safest way.';
+        else if (danger.length && danger[0].x === best.move.fromX && danger[0].y === best.move.fromY) {
+            clue = `Your ${danger[0].type} on ${squareName(danger[0].x, danger[0].y)} is in danger.`;
+        } else if (threat === 'mate') clue = 'Your opponent threatens mate — stop it.';
+        else if (threat) clue = 'Your opponent has a threat — what does their last move attack?';
+        else if (danger.length) clue = `Something of yours is under attack — deal with it.`;
+        else if (res.score <= -300) clue = 'You are worse here — find the toughest defence.';
+        else clue = best.san.includes('x') ? 'A capture is strong here.' : 'No tactics right now — find the best improving move.';
+    }
+    const sign = color === 'white' ? 1 : -1;
+    return { move: best.move, san: best.san, piece, clue, evalWhite: sign * res.score, line: res.pv.slice(0, 6) };
+}
+
+// What `enemy` would do with a free move here (a "null move"): 'mate', 'material'
+// (wins at least EXPLAIN_MATERIAL along its line) or null. Leaves the board changed.
+function opponentThreat(enemy) {
+    currentTurn = enemy;
+    if (!hasAnyLegalMove(enemy)) return null;
+    const res = searchPosition(THREAT_MODE, null);
+    if (res.score >= EVAL_MATE_BOUND) return 'mate';
+    return lineMaterialDelta(res.pv, enemy, LINE_PLIES) >= EXPLAIN_MATERIAL ? 'material' : null;
+}
+
+// `color`'s pieces (not pawns or the king) that are attacked and undefended,
+// most valuable first.
+function piecesInDanger(color, enemy) {
+    const out = [];
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            const p = gameState[y][x];
+            if (!p || p.color !== color || p.type === 'pawn' || p.type === 'king') continue;
+            if (isSquareAttacked(x, y, enemy) && !isSquareAttacked(x, y, color)) out.push({ x, y, type: p.type });
+        }
+    }
+    return out.sort((a, b) => PIECE_VALUES[b.type] - PIECE_VALUES[a.type]);
+}
+
 // ─── LIVE ANALYSIS ─────────────────────────────────────────────────────────────
 // The review page's engine panel: searches the position after `sanMoves`
 // deeper and deeper (top LIVE_LINES moves) and posts every finished depth.
@@ -561,6 +626,8 @@ self.onmessage = function (e) {
         } else if (data.type === 'judgeMove') {
             const entry = runJudgeMove(data.sanMoves, data.san);
             self.postMessage({ type: 'judgeReply', entry, requestId: data.requestId });
+        } else if (data.type === 'hint') {
+            self.postMessage({ type: 'hintReply', hint: runHint(data.sanMoves), requestId: data.requestId });
         } else if (data.type === 'live') {
             runLive(data.sanMoves, data.requestId, data.maxMs);
         }
