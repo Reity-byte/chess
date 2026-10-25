@@ -8,6 +8,7 @@
     "test:perft": "node tests/perft.js",
     "test:analysis": "node tests/analysis.js",
     "bench": "node tests/bench.js",
-    "match": "node tests/match.js"
+    "match": "node tests/match.js",
+    "release": "node tools/release.js"
   }
 }

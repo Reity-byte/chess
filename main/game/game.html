@@ -4,23 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Play · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=21">
-    <link rel="stylesheet" href="../pieces.css?v=21">
-    <script src="../style-settings.js?v=21"></script>
-    <link rel="stylesheet" href="game.css?v=21">
-    <script src="engine.js?v=21" defer></script>
-    <script src="ai.js?v=21" defer></script>
-    <script src="notation.js?v=21" defer></script>
-    <script src="openings.js?v=21" defer></script>
-    <script src="strength.js?v=21" defer></script>
-    <script src="sound.js?v=21" defer></script>
-    <script src="board-ui.js?v=21" defer></script>
-    <script src="analysis.js?v=21" defer></script>
-    <script src="history-store.js?v=21" defer></script>
-    <script src="ratings.js?v=21" defer></script>
-    <script src="review-runner.js?v=21" defer></script>
-    <script src="coach.js?v=21" defer></script>
-    <script src="game-script.js?v=21" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=22">
+    <link rel="stylesheet" href="../pieces.css?v=22">
+    <script src="../style-settings.js?v=22"></script>
+    <link rel="manifest" href="../manifest.webmanifest">
+    <meta name="theme-color" content="#111317">
+    <link rel="icon" type="image/png" href="../icons/icon-192.png">
+    <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+    <script src="../app.js?v=22" defer></script>
+    <link rel="stylesheet" href="game.css?v=22">
+    <script src="engine.js?v=22" defer></script>
+    <script src="ai.js?v=22" defer></script>
+    <script src="notation.js?v=22" defer></script>
+    <script src="openings.js?v=22" defer></script>
+    <script src="strength.js?v=22" defer></script>
+    <script src="sound.js?v=22" defer></script>
+    <script src="board-ui.js?v=22" defer></script>
+    <script src="analysis.js?v=22" defer></script>
+    <script src="history-store.js?v=22" defer></script>
+    <script src="ratings.js?v=22" defer></script>
+    <script src="review-runner.js?v=22" defer></script>
+    <script src="coach.js?v=22" defer></script>
+    <script src="game-script.js?v=22" defer></script>
 </head>
 <body>
 
@@ -114,6 +119,7 @@
             <div class="eyebrow field-label">Mode</div>
             <div class="segmented" data-group="mode">
                 <button data-value="human" class="selected">You vs Engine</button>
+                <button data-value="local">Pass &amp; play</button>
                 <button data-value="ai">Engine vs Engine</button>
             </div>
 
@@ -123,6 +129,14 @@
                     <button data-value="white" class="selected">White</button>
                     <button data-value="random">Random</button>
                     <button data-value="black">Black</button>
+                </div>
+            </div>
+
+            <div id="localRow" class="hidden">
+                <div class="eyebrow field-label">Board</div>
+                <div class="segmented" data-group="autoFlip">
+                    <button data-value="on" class="selected">Flip each turn<small>faces the player to move</small></button>
+                    <button data-value="off">Keep White at the bottom<small>for playing side by side</small></button>
                 </div>
             </div>
 

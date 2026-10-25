@@ -112,8 +112,9 @@ h1, h2, h3, h4, p { margin: 0; }
     .topnav a { padding: 7px 8px; }
     .brand-name { display: none; }
 }
+.install-button { padding: 0 12px; gap: 6px; color: var(--accent); font-size: 14px; }
 @media (max-width: 480px) {
-    .style-button-label { display: none; }
+    .style-button-label, .install-label { display: none; }
     .topnav { gap: 0; }
     .topnav a { padding: 7px 6px; font-size: 13px; }
 }

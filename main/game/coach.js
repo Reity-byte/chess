@@ -20,7 +20,7 @@ let hint = null;         // { ply, step: 0|1|2, data, pending } for the position
 
 function askCoach(message) {
     if (!coachWorker) {
-        try { coachWorker = new Worker('analysis-worker.js?v=21'); } catch (e) { return Promise.resolve(null); }
+        try { coachWorker = new Worker('analysis-worker.js?v=22'); } catch (e) { return Promise.resolve(null); }
         coachWorker.onmessage = (e) => {
             const d = e.data;
             const waiting = coachWaiting.get(d.requestId);
@@ -147,6 +147,7 @@ function clearHint() {
 function syncHintButton() {
     const btn = document.getElementById('hintButton');
     if (!btn) return;
+    btn.classList.toggle('hidden', gameMode === 'local'); // no engine help between two players
     const canAsk = gameActive && gameMode === 'human' && isHumanTurn() && !aiThinking;
     btn.disabled = !canAsk || (hint && (hint.pending || hint.step >= 2));
     btn.textContent = hint && hint.step === 1 ? '💡 Show move' : '💡 Hint';

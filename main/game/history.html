@@ -4,13 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>History · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=21">
-    <link rel="stylesheet" href="../pieces.css?v=21">
-    <script src="../style-settings.js?v=21"></script>
-    <link rel="stylesheet" href="game.css?v=21">
-    <script src="history-store.js?v=21" defer></script>
-    <script src="ratings.js?v=21" defer></script>
-    <script src="history-page.js?v=21" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=22">
+    <link rel="stylesheet" href="../pieces.css?v=22">
+    <script src="../style-settings.js?v=22"></script>
+    <link rel="manifest" href="../manifest.webmanifest">
+    <meta name="theme-color" content="#111317">
+    <link rel="icon" type="image/png" href="../icons/icon-192.png">
+    <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+    <script src="../app.js?v=22" defer></script>
+    <link rel="stylesheet" href="game.css?v=22">
+    <script src="history-store.js?v=22" defer></script>
+    <script src="ratings.js?v=22" defer></script>
+    <script src="history-page.js?v=22" defer></script>
 </head>
 <body>
 
@@ -61,6 +66,7 @@
                 <div class="segmented" id="historyFilter" style="margin-left:auto; padding:3px">
                     <button data-filter="all" class="selected" style="height:28px">All</button>
                     <button data-filter="human" style="height:28px">vs Engine</button>
+                    <button data-filter="local" style="height:28px">Pass &amp; play</button>
                     <button data-filter="ai" style="height:28px">Engine vs Engine</button>
                 </div>
             </div>

@@ -1,0 +1,21 @@
+{
+    "name": "Chess — play, review, train",
+    "short_name": "Chess",
+    "description": "Play the engine or a friend, review your games and train — works offline.",
+    "start_url": "./site.html",
+    "scope": "./",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#111317",
+    "theme_color": "#111317",
+    "icons": [
+        { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+        { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+        { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    ],
+    "shortcuts": [
+        { "name": "Play", "url": "./game/game.html", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+        { "name": "Review", "url": "./game/analysis.html", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+        { "name": "Train", "url": "./game/trainer.html", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+    ]
+}

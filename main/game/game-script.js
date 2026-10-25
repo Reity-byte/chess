@@ -21,7 +21,7 @@ const MIN_RATED_PLIES = 4;     // games aborted before this many moves don't cou
 // timeByMode remembers the last time control picked in each mode.
 // First visit: the opponent nearest your rating; engines watch at a strong level.
 const settings = Object.assign(
-    { mode: 'human', color: 'white', time: 'unlimited', level: null, timeByMode: {}, coach: 'off',
+    { mode: 'human', color: 'white', time: 'unlimited', level: null, timeByMode: {}, coach: 'off', autoFlip: 'on',
       whiteLevel: ENGINE_LEVELS.length - 4, blackLevel: ENGINE_LEVELS.length - 4 },
     loadJSON(SETUP_KEY) || {});
 // A control saved by an older version that no mode offers: that mode's default.
@@ -32,7 +32,8 @@ if (settings.level === null || settings.level === undefined) {
     settings.level = nearestEngineLevel(playerRating(timeModeOf(settings.time)).rating);
 }
 
-let gameMode = 'human';     // 'human' (vs engine) | 'ai' (engine vs engine)
+let gameMode = 'human';     // 'human' (vs engine) | 'local' (pass & play) | 'ai' (engine vs engine)
+let autoFlip = false;       // pass & play: turn the board to the side to move after each move
 let playerColor = 'white';  // the human's color (orientation reference in AI vs AI)
 let engineLevels = { white: null, black: null }; // level index per engine-controlled color
 let rated = false;          // vs-engine games count toward your rating unless a takeback is used
@@ -90,8 +91,8 @@ function rowsFromSAN(list) {
 }
 
 const other = (c) => c === 'white' ? 'black' : 'white';
-const isHumanTurn = () => gameActive && gameMode === 'human' && currentTurn === playerColor;
-const isEngineTurn = () => gameActive && (gameMode === 'ai' || currentTurn !== playerColor);
+const isHumanTurn = () => gameActive && (gameMode === 'local' || (gameMode === 'human' && currentTurn === playerColor));
+const isEngineTurn = () => gameActive && gameMode !== 'local' && (gameMode === 'ai' || currentTurn !== playerColor);
 
 // ─── ENGINE (worker with synchronous fallback) ─────────────────────────────────
 // Workers can't start from file:// in some browsers; then the search runs on
@@ -105,7 +106,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=21');
+            this.worker = new Worker('ai-worker.js?v=22');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -217,7 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Landing-page links preselect the setup (?mode=human|ai&difficulty=...);
     // ?resume=1 continues the saved in-progress game.
     const params = new URLSearchParams(location.search);
-    if (params.get('mode') === 'human' || params.get('mode') === 'ai') settings.mode = params.get('mode');
+    if (['human', 'local', 'ai'].includes(params.get('mode'))) settings.mode = params.get('mode');
     const legacy = LEGACY_DIFFICULTY_LEVEL[params.get('difficulty')];
     if (legacy !== undefined) settings.level = legacy;
     // The Trainer's suggested game: ?level=<ENGINE_LEVELS index>&time=<control>.
@@ -307,9 +308,11 @@ function syncSetupUI() {
             b.classList.toggle('selected', b.dataset.value === settings[group.dataset.group]));
     });
     syncTimeControls();
-    document.getElementById('colorChoiceRow').classList.toggle('hidden', settings.mode === 'ai');
-    document.getElementById('coachRow').classList.toggle('hidden', settings.mode === 'ai');
-    document.getElementById('strengthHuman').classList.toggle('hidden', settings.mode === 'ai');
+    const vsEngine = settings.mode === 'human';
+    document.getElementById('colorChoiceRow').classList.toggle('hidden', !vsEngine);
+    document.getElementById('coachRow').classList.toggle('hidden', !vsEngine);
+    document.getElementById('strengthHuman').classList.toggle('hidden', !vsEngine);
+    document.getElementById('localRow').classList.toggle('hidden', settings.mode !== 'local');
     document.getElementById('strengthAi').classList.toggle('hidden', settings.mode !== 'ai');
 
     document.querySelectorAll('#setupModal .strength').forEach(box => {
@@ -361,13 +364,15 @@ function startGame(resumeData) {
         }
         rated = resumeData.rated === true;
         coach = resumeData.coach === true && gameMode === 'human';
+        autoFlip = gameMode === 'local' && resumeData.autoFlip !== false;
     } else {
         gameMode = settings.mode;
-        playerColor = gameMode === 'ai' ? 'white'
+        playerColor = gameMode !== 'human' ? 'white'
             : settings.color === 'random' ? (Math.random() < 0.5 ? 'white' : 'black') : settings.color;
-        engineLevels = gameMode === 'ai'
-            ? { white: settings.whiteLevel, black: settings.blackLevel }
+        engineLevels = gameMode === 'ai' ? { white: settings.whiteLevel, black: settings.blackLevel }
+            : gameMode === 'local' ? { white: null, black: null }
             : { white: null, black: null, [other(playerColor)]: settings.level };
+        autoFlip = gameMode === 'local' && settings.autoFlip === 'on';
         coach = gameMode === 'human' && settings.coach === 'on';
         rated = gameMode === 'human' && !coach; // coached games are practice
         timeControl = settings.time;
@@ -392,12 +397,13 @@ function startGame(resumeData) {
         startClock();
     }
 
+    if (autoFlip) isFlipped = currentTurn === 'black';
     board.setFlipped(isFlipped);
     board.render(gameState, { animate: false });
     board.setArrows([]);
     syncBoardMarks();
-    board.setInteractive(gameMode === 'human');
-    document.getElementById('liveActions').classList.toggle('hidden', gameMode !== 'human');
+    board.setInteractive(gameMode !== 'ai');
+    document.getElementById('liveActions').classList.toggle('hidden', gameMode === 'ai');
 
     updatePlayers();
     renderMoves();
@@ -432,6 +438,7 @@ function commitMove(move, promo) {
     saveInProgressGame();
 
     if (gameMode === 'human' && color === playerColor) coachAfterMove(sanList().slice(0, -1), san);
+    if (autoFlip) flipToMover();
 
     const status = getGameStatus();
     if (status) { endGame(status); return; }
@@ -535,11 +542,11 @@ function endGame(status) {
 function rematch() {
     const human = gameMode === 'human';
     const color = human ? other(playerColor) : 'white';
-    const levels = human
-        ? { white: null, black: null, [other(color)]: engineLevels[other(playerColor)] }
+    const levels = human ? { white: null, black: null, [other(color)]: engineLevels[other(playerColor)] }
+        : gameMode === 'local' ? { white: null, black: null }
         : { white: engineLevels.black, black: engineLevels.white };
     startGame({ gameMode, playerColor: color, selectedTimeControl: timeControl, engineLevels: levels,
-                rated: human && !coachOn, coach: coachOn, moveHistory: [], clock: null });
+                rated: human && !coachOn, coach: coachOn, autoFlip, moveHistory: [], clock: null });
 }
 
 // ─── PLAYERS, CAPTURES, STATUS ─────────────────────────────────────────────────
@@ -547,6 +554,7 @@ function rematch() {
 // Display name (the rating is shown next to it); 'You' must stay exactly that,
 // the review page uses it to orient the board and pick whose mistakes to retry.
 function playerLabel(color) {
+    if (gameMode === 'local') return color === 'white' ? 'White' : 'Black';
     return gameMode === 'human' && color === playerColor ? 'You' : 'Engine';
 }
 
@@ -583,7 +591,9 @@ function updateStatus(finalStatus) {
     const chip = document.getElementById('levelChip');
     chip.hidden = !gameActive && !finalStatus;
     const opponent = levelOf(other(playerColor));
-    if (gameMode === 'ai' && levelOf('white') && levelOf('black')) {
+    if (gameMode === 'local') {
+        chip.textContent = `Pass & play · ${timeControlTitle(timeControl)}`;
+    } else if (gameMode === 'ai' && levelOf('white') && levelOf('black')) {
         chip.textContent = `≈${levelOf('white').rating} vs ≈${levelOf('black').rating} · ${timeControlTitle(timeControl)}`;
     } else if (opponent) {
         chip.textContent = `Engine ≈${opponent.rating} · ${timeControlTitle(timeControl)} · ${rated ? 'rated' : coachOn ? 'coach' : 'unrated'}`;
@@ -602,7 +612,10 @@ function updateStatus(finalStatus) {
         const toMove = currentTurn === 'white' ? 'White' : 'Black';
         const check = isInCheck(currentTurn);
         dot.classList.add(check ? 'alert' : 'live');
-        if (gameMode === 'ai') {
+        if (gameMode === 'local') {
+            text.textContent = check ? `Check! ${toMove} to move` : `${toMove} to move`;
+            sub.textContent = 'Pass & play — hand the device over';
+        } else if (gameMode === 'ai') {
             text.textContent = check ? `${toMove} is in check` : `${toMove} to move`;
             sub.textContent = aiThinking ? 'Engine is thinking…' : 'Engine vs Engine';
         } else if (currentTurn === playerColor) {
@@ -620,7 +633,7 @@ function updateStatus(finalStatus) {
         const color = (id === 'topStrip') === isFlipped ? 'white' : 'black';
         strip.classList.toggle('thinking', aiThinking && currentTurn === color && gameActive);
     }
-    const canAct = gameActive && gameMode === 'human';
+    const canAct = gameActive && gameMode !== 'ai';
     document.getElementById('takebackButton').disabled = !canAct || sanList().length === 0;
     document.getElementById('offerDrawButton').disabled = !canAct || aiThinking;
     document.getElementById('resignButton').disabled = !canAct;
@@ -724,9 +737,45 @@ function updateClockDisplay() {
     }
 }
 
+// ─── PASS & PLAY ───────────────────────────────────────────────────────────────
+// Turns the board to the side to move, after a short beat so the move just
+// played is seen landing first.
+function flipToMover() {
+    const token = gameToken, plies = sanList().length;
+    setTimeout(() => {
+        if (token !== gameToken || sanList().length !== plies || !gameActive) return;
+        isFlipped = currentTurn === 'black';
+        board.setFlipped(isFlipped);
+        updatePlayers();
+        updateStatus();
+    }, 450);
+}
+
+// Runs `action` only on a second click within 3 s (the button asks `prompt`
+// in between) — nobody resigns or agrees a draw by accident on a shared device.
+function confirmTwice(btn, prompt, action) {
+    if (btn.dataset.armed) {
+        clearTimeout(+btn.dataset.armed);
+        delete btn.dataset.armed;
+        btn.textContent = btn.dataset.label;
+        action();
+        return;
+    }
+    btn.dataset.label = btn.textContent;
+    btn.textContent = prompt;
+    btn.dataset.armed = String(setTimeout(() => { delete btn.dataset.armed; btn.textContent = btn.dataset.label; }, 3000));
+}
+
 // ─── RESIGN / DRAW / TAKEBACK ──────────────────────────────────────────────────
 function resign() {
-    if (!gameActive || gameMode !== 'human') return;
+    if (!gameActive) return;
+    if (gameMode === 'local') {
+        const loser = currentTurn === 'white' ? 'White' : 'Black', winner = other(currentTurn);
+        confirmTwice(document.getElementById('resignButton'), `${loser} resigns?`, () => endGame({ reason: 'resign',
+            result: winner === 'white' ? '1-0' : '0-1', message: `${loser} resigned — ${winner === 'white' ? 'White' : 'Black'} wins` }));
+        return;
+    }
+    if (gameMode !== 'human') return;
     const winner = other(playerColor);
     endGame({ reason: 'resign', result: winner === 'white' ? '1-0' : '0-1',
               message: `You resigned — ${winner === 'white' ? 'White' : 'Black'} wins` });
@@ -734,6 +783,11 @@ function resign() {
 
 // The engine accepts only when its static evaluation says it isn't better.
 function offerDraw() {
+    if (gameActive && gameMode === 'local') {
+        confirmTwice(document.getElementById('offerDrawButton'), 'Both agree?',
+            () => endGame({ reason: 'agreement', result: '1/2-1/2', message: 'Draw by agreement' }));
+        return;
+    }
     if (!gameActive || gameMode !== 'human' || aiThinking) return;
     if (evaluateForColor(other(playerColor)) < 100) {
         endGame({ reason: 'agreement', result: '1/2-1/2', message: 'Draw by agreement' });
@@ -745,7 +799,7 @@ function offerDraw() {
 // Undoes back to the human's previous turn (the engine's reply and the human's
 // move before it). Works while the engine is thinking, too.
 function takeback() {
-    if (!gameActive || gameMode !== 'human') return;
+    if (!gameActive || gameMode === 'ai') return;
     const list = sanList();
     if (list.length === 0) return;
     gameToken++;
@@ -756,8 +810,8 @@ function takeback() {
         showToast('Takeback used — this game no longer counts toward your rating.', 3200);
     }
 
-    list.pop();
-    while (list.length > 0 && (list.length % 2 === 0 ? 'white' : 'black') !== playerColor) list.pop();
+    list.pop(); // pass & play undoes just the last move; vs the engine, back to your turn
+    while (gameMode === 'human' && list.length > 0 && (list.length % 2 === 0 ? 'white' : 'black') !== playerColor) list.pop();
 
     replaySANFromStart(list);
     moveHistory = rowsFromSAN(list);
@@ -770,15 +824,16 @@ function takeback() {
     updatePlayers();
     updateStatus();
     saveInProgressGame();
+    if (autoFlip) flipToMover();
     if (isEngineTurn()) setTimeout(playEngineMove, 300);
 }
 
 // ─── SAVE / RESUME ─────────────────────────────────────────────────────────────
 function saveInProgressGame() {
-    if (!gameActive || gameMode !== 'human') return;
+    if (!gameActive || gameMode === 'ai') return;
     try {
         localStorage.setItem(INPROGRESS_KEY, JSON.stringify({
-            moveHistory, gameMode, playerColor, engineLevels, rated, coach: coachOn, selectedTimeControl: timeControl,
+            moveHistory, gameMode, playerColor, engineLevels, rated, coach: coachOn, autoFlip, selectedTimeControl: timeControl,
             clock: clockState ? { white: clockState.white, black: clockState.black, incrementMs: clockState.incrementMs } : null,
         }));
     } catch (e) { /* storage full or unavailable: resume just won't be offered */ }

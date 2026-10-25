@@ -1095,6 +1095,29 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 📲 Session 29 — Installable offline app + Pass & play
+
+- **Installable app (PWA):** `main/manifest.webmanifest` (standalone, dark theme, Play/Review/Train
+  shortcuts), icons in `main/icons/` (192, 512, maskable 512, apple-touch 180 — dark tile, green board
+  squares, the cburnett knight; rendered once with headless Chrome), and on every page: manifest link,
+  theme-color, icons and `app.js`. `app.js` registers `sw.js` and shows an "⤓ Install" button in the top
+  bar when the browser offers installation (`beforeinstallprompt`; Chrome/Edge/Android).
+- **Offline:** `sw.js` precaches every file of the site on install (`precache.js`, 158 files, ~1.1 MB),
+  serves pages network-first (falls back to the cached copy offline) and everything else cache-first;
+  old `chess-N` caches are dropped on activate. Verified: with the server stopped the review page loads
+  fully from the cache. Needs https or localhost — **GitHub Pages is not enabled yet** (`index.html` at
+  the repo root already redirects to `main/site.html`).
+- **`npm run release`** (`tools/release.js`) replaces the manual sed: bumps `?v=N` in every HTML/JS file
+  and regenerates `main/precache.js`. Run it for every change to CSS/JS (`-- --keep` = list only).
+- **Pass & play** (`gameMode 'local'`): third setup mode; both sides human, no engine; "Board" option
+  flips to the side to move after each move (450 ms after it lands) or keeps White at the bottom;
+  takeback undoes one move; resign / draw need a second click within 3 s (`confirmTwice`); clocks work;
+  no hints or coach; unrated; saved/resumed like other games; history mode `local` with its own filter;
+  the review checks both sides. Names are White / Black.
+- Cache version `?v=22`.
+
+---
+
 ## 🎓 Session 28 — Hints, Coach mode and the Trainer page
 
 - **💡 Hint** (game page, any game vs the engine): first press highlights the piece and gives a clue
@@ -1246,6 +1269,8 @@ I have a vanilla JS chess site:
   main/game/strength.js   (calibrated engine strength ladder; tests/calibrate.js measures it)
   main/game/ratings.js    (time modes Bullet/Blitz/Rapid/Unlimited + the player rating per mode)
   main/game/coach.js      (game page: 💡 hints and Coach mode grading)
+  main/app.js, sw.js, manifest.webmanifest, icons/   (installable offline app; precache.js is generated)
+  tools/release.js        (npm run release: bump ?v= and regenerate the offline file list)
   main/game/trainer.html, trainer-page.js   (Trainer: focus areas, practice list, next game)
   main/game/ai-worker.js  (live-game engine worker)
   main/game/notation.js   (SAN generation + resolveSAN/replaySANFromStart)

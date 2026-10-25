@@ -4,7 +4,7 @@
 // game from its SAN move list: when a request extends the moves it already
 // knows, only the new moves are played; anything else (new game, takeback)
 // triggers a full replay. Its transposition table survives between moves.
-importScripts('engine.js?v=21', 'ai.js?v=21', 'notation.js?v=21');
+importScripts('engine.js?v=22', 'ai.js?v=22', 'notation.js?v=22');
 
 let knownSAN = [];
 
