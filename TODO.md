@@ -1067,6 +1067,86 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 📋 NEXT SESSION PLAN — After-game experience & review page renovation
+
+**User feedback (2026-10-25):** "the after game tab … just feels like you have to scroll down to see
+something — try to renovate it." Measured at 1440×900: board 680 px, but the review's side column is
+~2,370 px of stacked panels (summary 413 → key moments 365 → **move list starts at y≈1,120** → move
+quality table 510 → PGN import 278). The most-used parts (move list, caption, nav) are off-screen, and the
+page scrolls as a whole, so the board scrolls away too.
+
+### Goal
+Everything needed while reviewing is visible **without page scroll** on desktop (≥1280×720): board, eval
+bar, caption ("coach"), move list, nav buttons and engine lines. Mobile gets a compact tabbed layout
+instead of a 6-panel stack.
+
+### A. Review page layout (main work)
+1. **App-shell layout.** The page stops scrolling on desktop: `main` = viewport height minus top bar.
+   Left: player strip / board / player strip. Right: a side panel **exactly as tall as the board area**,
+   a flex column whose only scrolling region is the tab content.
+2. **Side panel structure** (top → bottom):
+   - **Game header** (compact, always visible): both players with accuracy pills, result, opening, and a
+     "⋯" menu (load another game / PGN, analysis depth Quick·Standard·Deep, flip, download PGN).
+   - **Coach bubble** = the current caption (icon, verdict, reason, better move), max 3 lines.
+   - **Tabs:** `Moves` (default) · `Summary` · `Retry` (badge with mistake count).
+     - *Moves:* engine lines strip (collapsed to 1 line, ▾ expands to 3; toggle stays) + the move list
+       with variations, filling the remaining height and scrolling internally (active move kept in view).
+     - *Summary:* key moments as cards (click → jump), move-quality counts as a compact chip grid
+       (icon + count per side, ~120 px instead of a 510 px table), phase accuracy as 3 small bars.
+     - *Retry:* the existing Retry panel moves here (tab badge = mistakes left; "Retry mistakes"
+       buttons elsewhere just switch to this tab).
+   - **Pinned footer:** ⏮ ◀ ▶ ⏭ ⇅, always at the bottom of the side panel (moved from under the board).
+3. **Eval graph under the board** as a full-width timeline strip (~64 px): click/drag to scrub, colored
+   dots for mistakes, cursor follows the move. Removes it from the side column.
+4. **PGN import** → a "Load game" modal from the header menu (also used by the empty state), not a
+   permanent panel.
+5. **Mobile (<960 px):** board → graph strip → pinned nav bar (sticky at the bottom of the viewport) →
+   coach bubble → the same three tabs. No long stack; nothing more than ~1.5 screens.
+6. Keep every feature reachable in ≤ 1 click: puzzle "Practice this moment" goes into the coach
+   bubble's actions; jump-to-category from the Summary chips.
+
+### B. Game over → review flow
+1. **Game-over card** (game page modal) gets richer: result + reason, animated rating change, and a
+   **quick accuracy preview** — start a Quick review in a background worker the moment the game ends
+   and show "Your accuracy 81% · 2 blunders · biggest moment 14.Qxe4+" when ready (with a spinner
+   until then). Buttons: **Full review** (primary), Rematch (same settings, colors swapped), New game,
+   Download PGN.
+2. The full review then opens from the Quick result already cached (instant first paint) and refines to
+   Standard in the background (show a small "refining…" chip, swap results in place).
+3. **Guided review** (chess.com-style "coach walk-through"): on first open, the coach bubble offers
+   "▶ Walk me through it" → steps through the key moments (next/prev), each with its explanation and the
+   better move on the board; ends at "Retry your N mistakes?".
+
+### C. Visual polish (site-wide)
+1. Spacing/typography pass: one spacing scale, consistent panel headers, fewer borders (use surface
+   contrast), tabular numbers for evals/accuracy.
+2. Move list as a proper 2-column table: zebra rows, sticky move numbers, hover/active states, eval
+   tooltip, variations indented with a left rule (already styled — tidy for the new width).
+3. Review player strips show captured pieces + material difference (reuse the game page's code).
+4. Tab switch / panel transitions (150 ms fade/slide), eval bar + graph cursor easing, reduced-motion
+   respected (already global).
+5. Optional (ask the user): **light theme** toggle in the Style panel (tokens already centralised in
+   theme.css); move sounds when stepping through the review (Style panel "Sound" covers it).
+
+### Acceptance checks
+- 1366×768 and 1440×900: coach bubble, move list (≥ 10 rows), engine line, nav buttons and graph all
+  visible with no page scroll; the board never scrolls away.
+- 375×812: no horizontal scroll; board + nav + coach + active tab within ~1.5 screens.
+- Every existing feature still works: variations, live engine, Retry, puzzles, history save, PGN import.
+- `npm test` passes; screenshots at the three sizes before/after.
+
+### Suggested order
+A1–A2 layout skeleton (tabs + pinned nav) → A3 graph strip → A2 Summary tab content + chips → A4 load
+modal → A5 mobile → B1 game-over card with quick preview → B2 cached-then-refine → B3 guided review →
+C polish → acceptance screenshots. A is one session on its own; B + C the next.
+
+### Questions to settle at the start
+- Default tab after a game: Moves, or Summary first? (Plan assumes Moves + coach bubble.)
+- Should the guided walk-through start automatically after a game, or only on request?
+- Light theme: wanted or not?
+
+---
+
 ## Paste this into a new session to continue:
 
 ```
