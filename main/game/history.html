@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>History · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=16">
-    <link rel="stylesheet" href="../pieces.css?v=16">
-    <script src="../style-settings.js?v=16"></script>
-    <link rel="stylesheet" href="game.css?v=16">
-    <script src="history-store.js?v=16" defer></script>
-    <script src="history-page.js?v=16" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=18">
+    <link rel="stylesheet" href="../pieces.css?v=18">
+    <script src="../style-settings.js?v=18"></script>
+    <link rel="stylesheet" href="game.css?v=18">
+    <script src="history-store.js?v=18" defer></script>
+    <script src="ratings.js?v=18" defer></script>
+    <script src="history-page.js?v=18" defer></script>
 </head>
 <body>
 
@@ -28,6 +29,7 @@
 
     <main class="history-page">
         <section class="panel rating-card">
+            <div class="segmented rating-modes" id="ratingModeTabs" role="tablist"></div>
             <div class="rating-head">
                 <div>
                     <div class="eyebrow">Your rating</div>

@@ -1095,6 +1095,28 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## ⏱️ Session 27 — Time modes (Bullet / Blitz / Rapid / Unlimited) with a rating each
+
+- `main/game/ratings.js` (new, shared by game + history pages): `TIME_MODES` — Bullet 1|0 1|1 2|1 ·
+  Blitz 3|0 3|2 5|0 5|3 · Rapid 10|0 10|5 15|10 30|0 · Unlimited (no clock) — `parseTimeControl`,
+  `timeModeOf` (chess.com rule: base + 40×increment < 3 min bullet, < 10 blitz, else rapid; also maps
+  old saved controls), `timeControlLabel` / `timeControlTitle`, and per-mode ratings
+  (`chessPlayerRatings` = { bullet, blitz, rapid, unlimited: { rating, games } }). First load migrates
+  the old single `chessPlayerRating`: its rating starts every mode, each mode's game count comes from
+  the rated history games of that mode. `recordRatedResult(mode, score, opp)`, `ratingText`,
+  `expectedScore`, `historyTimeMode(g)` moved here from game-script.js.
+- Setup modal: mode tabs (each shows your rating in it) + the mode's controls as chips; the last control
+  per mode is remembered (`settings.timeByMode`); expected score / "Match my rating" / setup text use
+  the chosen mode's rating. History entries store `timeMode`; the status chip, PGN names, game-over
+  rating line ("Blitz 812 → 826") use the game's mode.
+- Timeout follows chess.com: flagging loses only if the opponent still has mating material
+  (`hasMatingMaterial`: not a lone king or king + one minor), otherwise it's a draw.
+- History page: rating card has mode tabs (opens on your most-played mode); peak / record / graph per
+  mode; each game in the list shows its time control.
+- Cache version `?v=18`.
+
+---
+
 ## 📋 PLAN (done in Session 26) — After-game experience & review page renovation
 
 **User feedback (2026-10-25):** "the after game tab … just feels like you have to scroll down to see
@@ -1195,6 +1217,7 @@ I have a vanilla JS chess site:
   main/game/engine.js     (rules, move gen, Zobrist keys, getGameStatus)
   main/game/ai.js         (0x88 search board + PVS search; searchRoot()/findBestMove())
   main/game/strength.js   (calibrated engine strength ladder; tests/calibrate.js measures it)
+  main/game/ratings.js    (time modes Bullet/Blitz/Rapid/Unlimited + the player rating per mode)
   main/game/ai-worker.js  (live-game engine worker)
   main/game/notation.js   (SAN generation + resolveSAN/replaySANFromStart)
   main/game/analysis.html, analysis-page.js   (Game Review page)

@@ -9,28 +9,28 @@ const AI_TIME_HUMAN = ENGINE_MOVE_TIME_MS; // the time cap the ladder was calibr
 const AI_TIME_SELFPLAY = 500; // ms per move in Engine vs Engine (keeps it watchable)
 const MIN_REPLY_MS = 250;     // instant (book) replies still get a beat before they land
 
-// `unlimited` has no entry: no clock at all.
-const TIME_CONTROLS = {
-    '5|0':   { minutes: 5,  incrementSec: 0  },
-    '10|5':  { minutes: 10, incrementSec: 5  },
-    '15|10': { minutes: 15, incrementSec: 10 },
-};
-
+// Time controls, their modes (Bullet/Blitz/Rapid/Unlimited) and the player's
+// rating per mode live in ratings.js.
 const INPROGRESS_KEY = 'chessInProgressGame';
 const ANALYSIS_HANDOFF_KEY = 'chessGameForAnalysis';
 const SETUP_KEY = 'chessSetup';
-const PLAYER_RATING_KEY = 'chessPlayerRating';
-const DEFAULT_PLAYER_RATING = 800;
-const PROVISIONAL_GAMES = 20;  // bigger rating steps until the rating has settled
 const MIN_RATED_PLIES = 4;     // games aborted before this many moves don't count
 
 // ─── STATE ─────────────────────────────────────────────────────────────────────
-// Setup choices; level / whiteLevel / blackLevel are ENGINE_LEVELS indices.
+// Setup choices; level / whiteLevel / blackLevel are ENGINE_LEVELS indices;
+// timeByMode remembers the last time control picked in each mode.
 // First visit: the opponent nearest your rating; engines watch at a strong level.
 const settings = Object.assign(
-    { mode: 'human', color: 'white', time: 'unlimited', level: nearestEngineLevel(playerRating().rating),
+    { mode: 'human', color: 'white', time: 'unlimited', level: null, timeByMode: {},
       whiteLevel: ENGINE_LEVELS.length - 4, blackLevel: ENGINE_LEVELS.length - 4 },
     loadJSON(SETUP_KEY) || {});
+// A control saved by an older version that no mode offers: that mode's default.
+if (!TIME_MODES.some(m => m.controls.includes(settings.time))) {
+    settings.time = TIME_MODES.find(m => m.id === timeModeOf(settings.time)).defaultControl;
+}
+if (settings.level === null || settings.level === undefined) {
+    settings.level = nearestEngineLevel(playerRating(timeModeOf(settings.time)).rating);
+}
 
 let gameMode = 'human';     // 'human' (vs engine) | 'ai' (engine vs engine)
 let playerColor = 'white';  // the human's color (orientation reference in AI vs AI)
@@ -61,28 +61,9 @@ function saveJSON(key, value) {
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage unavailable */ }
 }
 
-// ─── PLAYER RATING ─────────────────────────────────────────────────────────────
-// Plain Elo against the engine levels' calibrated ratings.
-function playerRating() {
-    const r = loadJSON(PLAYER_RATING_KEY);
-    return r && Number.isFinite(r.rating) ? r : { rating: DEFAULT_PLAYER_RATING, games: 0 };
-}
-
-function expectedScore(rating, opponentRating) {
-    return 1 / (1 + Math.pow(10, (opponentRating - rating) / 400));
-}
-
-function recordRatedResult(score, opponentRating) {
-    const r = playerRating();
-    const k = r.games < PROVISIONAL_GAMES ? 40 : 20;
-    const delta = Math.round(k * (score - expectedScore(r.rating, opponentRating)));
-    const after = Math.max(100, r.rating + delta);
-    saveJSON(PLAYER_RATING_KEY, { rating: after, games: r.games + 1 });
-    return { before: r.rating, after, delta: after - r.rating };
-}
-
-function ratingText(r) {
-    return `${r.rating}${r.games < PROVISIONAL_GAMES ? '?' : ''}`;
+// The time mode of the game being played (its rating is the one that counts).
+function currentTimeMode() {
+    return timeModeOf(timeControl);
 }
 
 function levelOf(color) {
@@ -124,7 +105,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=16');
+            this.worker = new Worker('ai-worker.js?v=18');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -194,13 +175,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const setupModal = $('setupModal');
 
     buildStrengthSliders();
+    buildTimeControls();
     $('matchRatingButton').addEventListener('click', () => {
-        settings.level = nearestEngineLevel(playerRating().rating);
+        settings.level = nearestEngineLevel(playerRating(timeModeOf(settings.time)).rating);
         syncSetupUI();
     });
 
     // Segmented controls in the setup modal write into `settings`.
-    document.querySelectorAll('#setupModal .segmented').forEach(group => {
+    document.querySelectorAll('#setupModal .segmented[data-group]').forEach(group => {
         group.addEventListener('click', (e) => {
             const btn = e.target.closest('button');
             if (!btn) return;
@@ -269,11 +251,55 @@ function buildStrengthSliders() {
     });
 }
 
+// Mode tabs (Bullet / Blitz / Rapid / Unlimited, each with your rating in it)
+// and the chosen mode's time controls as chips.
+function buildTimeControls() {
+    const tabs = document.getElementById('timeModeTabs');
+    for (const mode of TIME_MODES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.mode = mode.id;
+        b.innerHTML = `<span class="tm-name">${mode.icon} ${mode.name}</span><small class="tm-rating"></small>`;
+        b.addEventListener('click', () => {
+            if (timeModeOf(settings.time) === mode.id) return;
+            settings.time = settings.timeByMode[mode.id] || mode.defaultControl;
+            syncSetupUI();
+        });
+        tabs.appendChild(b);
+    }
+}
+
+function syncTimeControls() {
+    const modeId = timeModeOf(settings.time);
+    const ratings = loadPlayerRatings();
+    document.querySelectorAll('#timeModeTabs button').forEach(b => {
+        b.classList.toggle('selected', b.dataset.mode === modeId);
+        b.querySelector('.tm-rating').textContent = ratingText(ratings[b.dataset.mode]);
+    });
+    const chips = document.getElementById('timeControlChips');
+    chips.innerHTML = '';
+    const mode = TIME_MODES.find(m => m.id === modeId);
+    for (const control of mode.controls) {
+        const c = document.createElement('button');
+        c.type = 'button';
+        c.className = 'time-chip' + (control === settings.time ? ' selected' : '');
+        c.textContent = timeControlLabel(control);
+        c.addEventListener('click', () => {
+            settings.time = control;
+            settings.timeByMode[modeId] = control;
+            syncSetupUI();
+        });
+        chips.appendChild(c);
+    }
+    chips.classList.toggle('hidden', mode.controls.length < 2);
+}
+
 function syncSetupUI() {
-    document.querySelectorAll('#setupModal .segmented').forEach(group => {
+    document.querySelectorAll('#setupModal .segmented[data-group]').forEach(group => {
         group.querySelectorAll('button').forEach(b =>
             b.classList.toggle('selected', b.dataset.value === settings[group.dataset.group]));
     });
+    syncTimeControls();
     document.getElementById('colorChoiceRow').classList.toggle('hidden', settings.mode === 'ai');
     document.getElementById('strengthHuman').classList.toggle('hidden', settings.mode === 'ai');
     document.getElementById('strengthAi').classList.toggle('hidden', settings.mode !== 'ai');
@@ -289,13 +315,14 @@ function syncSetupUI() {
             `<strong>≈ ${level.rating}</strong><span>${engineLevelTitle(level.rating)}</span>`;
     });
 
-    const me = playerRating();
+    const modeName = timeModeName(timeModeOf(settings.time));
+    const me = playerRating(timeModeOf(settings.time));
     const opponent = ENGINE_LEVELS[settings.level];
     document.getElementById('levelOdds').textContent =
         `Your expected score: ${Math.round(expectedScore(me.rating, opponent.rating) * 100)}%`;
     document.getElementById('setupSub').textContent = me.games
-        ? `Your rating: ${ratingText(me)} after ${me.games} rated game${me.games === 1 ? '' : 's'}.`
-        : `Your rating starts at ${me.rating} and adjusts after every game against the engine.`;
+        ? `Your ${modeName} rating: ${ratingText(me)} after ${me.games} rated game${me.games === 1 ? '' : 's'}.`
+        : `Your ${modeName} rating starts at ${me.rating} and adjusts after every game against the engine.`;
     saveJSON(SETUP_KEY, settings);
 }
 
@@ -467,7 +494,7 @@ function endGame(status) {
     if (rated && gameMode === 'human' && status.result !== '*') {
         if (sanList().length >= MIN_RATED_PLIES) {
             const score = status.result === '1/2-1/2' ? 0.5 : (status.result === '1-0') === (playerColor === 'white') ? 1 : 0;
-            ratingChange = recordRatedResult(score, levelOf(other(playerColor)).rating);
+            ratingChange = recordRatedResult(currentTimeMode(), score, levelOf(other(playerColor)).rating);
         }
         rated = false; // never count the same game twice
     }
@@ -477,7 +504,7 @@ function endGame(status) {
         white: names.white, black: names.black,
         engineRatings: { white: levelOf('white')?.rating ?? null, black: levelOf('black')?.rating ?? null },
         result: status.result, reason: status.message, plies: sans.length, sanMoves: sans,
-        timeControl, rated: !!ratingChange,
+        timeControl, timeMode: currentTimeMode(), rated: !!ratingChange,
         ratingBefore: ratingChange ? ratingChange.before : null, ratingAfter: ratingChange ? ratingChange.after : null,
     }) : null;
     updatePlayers();
@@ -507,7 +534,7 @@ function playerLabel(color) {
 }
 
 function playerRatingLabel(color) {
-    if (gameMode === 'human' && color === playerColor) return ratingText(playerRating());
+    if (gameMode === 'human' && color === playerColor) return ratingText(playerRating(currentTimeMode()));
     const level = levelOf(color);
     return level ? `≈${level.rating}` : '';
 }
@@ -540,9 +567,9 @@ function updateStatus(finalStatus) {
     chip.hidden = !gameActive && !finalStatus;
     const opponent = levelOf(other(playerColor));
     if (gameMode === 'ai' && levelOf('white') && levelOf('black')) {
-        chip.textContent = `≈${levelOf('white').rating} vs ≈${levelOf('black').rating}`;
+        chip.textContent = `≈${levelOf('white').rating} vs ≈${levelOf('black').rating} · ${timeControlTitle(timeControl)}`;
     } else if (opponent) {
-        chip.textContent = `Engine ≈${opponent.rating} · ${rated ? 'rated' : 'unrated'}`;
+        chip.textContent = `Engine ≈${opponent.rating} · ${timeControlTitle(timeControl)} · ${rated ? 'rated' : 'unrated'}`;
     } else {
         chip.hidden = true; // no game set up yet
     }
@@ -614,7 +641,7 @@ function renderMoves() {
 // ─── CLOCK ─────────────────────────────────────────────────────────────────────
 function startClock() {
     stopClock();
-    const tc = TIME_CONTROLS[timeControl];
+    const tc = parseTimeControl(timeControl);
     if (!tc) { clockState = null; return; }
     clockState = {
         white: tc.minutes * 60000, black: tc.minutes * 60000,
@@ -636,11 +663,30 @@ function tickClock() {
     if (clockState[currentTurn] <= 0) {
         clockState[currentTurn] = 0;
         const winner = other(currentTurn);
+        // A flag only wins if the other side could still mate (chess.com's rule).
+        if (!hasMatingMaterial(winner)) {
+            endGame({ reason: 'timeout', result: '1/2-1/2', message: 'Draw — time out, but no mating material left' });
+            return;
+        }
         endGame({ reason: 'timeout', result: winner === 'white' ? '1-0' : '0-1',
                   message: `${winner === 'white' ? 'White' : 'Black'} wins on time` });
         return;
     }
     updateClockDisplay();
+}
+
+// Whether `color` has anything that could still deliver mate: not a lone king,
+// nor king + a single bishop or knight.
+function hasMatingMaterial(color) {
+    let minors = 0;
+    for (const row of gameState) {
+        for (const p of row) {
+            if (!p || p.color !== color || p.type === 'king') continue;
+            if (p.type === 'bishop' || p.type === 'knight') minors++;
+            else return true; // a pawn, rook or queen
+        }
+    }
+    return minors >= 2;
 }
 
 function formatClock(ms) {
@@ -732,7 +778,7 @@ function showGameOverModal(status) {
     document.getElementById('gameOverMoves').textContent = `${n} move${n === 1 ? '' : 's'}`;
     const ratingEl = document.getElementById('gameOverRating');
     if (ratingChange) {
-        ratingEl.textContent = `${ratingChange.before} → ${ratingChange.after} (${ratingChange.delta >= 0 ? '+' : ''}${ratingChange.delta})`;
+        ratingEl.textContent = `${timeModeName(currentTimeMode())} ${ratingChange.before} → ${ratingChange.after} (${ratingChange.delta >= 0 ? '+' : ''}${ratingChange.delta})`;
         ratingEl.className = 'rating-change ' + (ratingChange.delta >= 0 ? 'up' : 'down');
     } else {
         ratingEl.textContent = gameMode === 'human' ? 'unrated' : '';

@@ -1,11 +1,9 @@
 // ─── HISTORY PAGE ──────────────────────────────────────────────────────────────
 // Drives history.html: your rating over time, results by color, accuracy and
 // most common error from reviewed games, and the list of finished games with a
-// one-click review. Data comes from history-store.js and the player rating
-// that game-script.js keeps in localStorage.
-const PLAYER_RATING_KEY = 'chessPlayerRating';
+// one-click review. Data comes from history-store.js, and the player's rating
+// per time mode (Bullet / Blitz / Rapid / Unlimited) from ratings.js.
 const ANALYSIS_HANDOFF_KEY = 'chessGameForAnalysis';
-const PROVISIONAL_GAMES = 20;
 
 const MOTIF_LABELS = {
     allowsMate: 'Allowing mate',
@@ -36,16 +34,29 @@ document.addEventListener('DOMContentLoaded', () => {
     render();
 });
 
-function playerRating() {
-    try {
-        const r = JSON.parse(localStorage.getItem(PLAYER_RATING_KEY));
-        if (r && Number.isFinite(r.rating)) return r;
-    } catch (e) { /* default */ }
-    return { rating: 800, games: 0 };
+// The rating card shows one time mode at a time (ratings.js keeps one per mode);
+// it opens on the mode you've played the most rated games in.
+let ratingMode = null;
+
+function ratedGames(mode = ratingMode) {
+    return loadHistory().filter(g => g.rated && Number.isFinite(g.ratingAfter) && historyTimeMode(g) === mode);
 }
 
-function ratedGames() {
-    return loadHistory().filter(g => g.rated && Number.isFinite(g.ratingAfter));
+function buildRatingTabs() {
+    const ratings = loadPlayerRatings();
+    if (!ratingMode) {
+        ratingMode = TIME_MODES.reduce((best, m) => ratings[m.id].games > ratings[best].games ? m.id : best, 'unlimited');
+    }
+    const tabs = $('ratingModeTabs');
+    tabs.innerHTML = '';
+    for (const m of TIME_MODES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = m.id === ratingMode ? 'selected' : '';
+        b.innerHTML = `<span class="tm-name">${m.icon} ${m.name}</span><small class="tm-rating">${ratingText(ratings[m.id])}</small>`;
+        b.addEventListener('click', () => { ratingMode = m.id; render(); });
+        tabs.appendChild(b);
+    }
 }
 
 // 1 / 0.5 / 0 from the human's point of view.
@@ -55,14 +66,16 @@ function playerScore(g) {
 }
 
 function render() {
-    const me = playerRating();
+    buildRatingTabs();
+    const me = playerRating(ratingMode);
+    const name = timeModeName(ratingMode);
     const rated = ratedGames();
     $('ratingNow').textContent = me.rating;
     $('ratingSub').textContent = me.games === 0
-        ? 'Play a game against the engine to get rated.'
+        ? `Play a ${name.toLowerCase()} game against the engine to get a ${name} rating.`
         : me.games < PROVISIONAL_GAMES
-            ? `Provisional — settles after ${PROVISIONAL_GAMES} rated games (${me.games} so far).`
-            : `Established over ${me.games} rated games.`;
+            ? `${name} · provisional — settles after ${PROVISIONAL_GAMES} rated games (${me.games} so far).`
+            : `${name} · established over ${me.games} rated games.`;
     const peak = rated.reduce((m, g) => Math.max(m, g.ratingAfter), rated.length ? rated[0].ratingBefore : me.rating);
     $('ratingPeak').textContent = rated.length ? peak : '–';
     $('ratingGames').textContent = me.games;
@@ -186,7 +199,7 @@ function renderGames() {
             <span class="result-badge ${badgeClass}">${badge}</span>
             <span class="game-main">
                 <span class="game-title"><span class="turn-swatch ${color} tiny"></span>${escapeHTML(g.white)} <span class="faint">vs</span> ${escapeHTML(g.black)}</span>
-                <span class="game-sub">${escapeHTML(g.reason || '')} · ${Math.ceil(g.plies / 2)} moves · ${new Date(g.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                <span class="game-sub">${timeControlTitle(g.timeControl || 'unlimited')} · ${escapeHTML(g.reason || '')} · ${Math.ceil(g.plies / 2)} moves · ${new Date(g.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
             </span>
             <span class="game-acc">${myAcc !== null && myAcc !== undefined ? `${myAcc.toFixed(1)}%` : ''}</span>
             <span class="game-delta ${delta > 0 ? 'up' : delta < 0 ? 'down' : ''}">${delta === null ? (g.mode === 'human' ? 'unrated' : '') : (delta >= 0 ? '+' : '') + delta}</span>`;

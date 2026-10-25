@@ -4,21 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Play · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=16">
-    <link rel="stylesheet" href="../pieces.css?v=16">
-    <script src="../style-settings.js?v=16"></script>
-    <link rel="stylesheet" href="game.css?v=16">
-    <script src="engine.js?v=16" defer></script>
-    <script src="ai.js?v=16" defer></script>
-    <script src="notation.js?v=16" defer></script>
-    <script src="openings.js?v=16" defer></script>
-    <script src="strength.js?v=16" defer></script>
-    <script src="sound.js?v=16" defer></script>
-    <script src="board-ui.js?v=16" defer></script>
-    <script src="analysis.js?v=16" defer></script>
-    <script src="history-store.js?v=16" defer></script>
-    <script src="review-runner.js?v=16" defer></script>
-    <script src="game-script.js?v=16" defer></script>
+    <link rel="stylesheet" href="../theme.css?v=18">
+    <link rel="stylesheet" href="../pieces.css?v=18">
+    <script src="../style-settings.js?v=18"></script>
+    <link rel="stylesheet" href="game.css?v=18">
+    <script src="engine.js?v=18" defer></script>
+    <script src="ai.js?v=18" defer></script>
+    <script src="notation.js?v=18" defer></script>
+    <script src="openings.js?v=18" defer></script>
+    <script src="strength.js?v=18" defer></script>
+    <script src="sound.js?v=18" defer></script>
+    <script src="board-ui.js?v=18" defer></script>
+    <script src="analysis.js?v=18" defer></script>
+    <script src="history-store.js?v=18" defer></script>
+    <script src="ratings.js?v=18" defer></script>
+    <script src="review-runner.js?v=18" defer></script>
+    <script src="game-script.js?v=18" defer></script>
 </head>
 <body>
 
@@ -129,12 +130,8 @@
             </div>
 
             <div class="eyebrow field-label">Time control</div>
-            <div class="segmented" data-group="time">
-                <button data-value="5|0">5 | 0</button>
-                <button data-value="10|5">10 | 5</button>
-                <button data-value="15|10">15 | 10</button>
-                <button data-value="unlimited" class="selected">∞</button>
-            </div>
+            <div class="segmented time-modes" id="timeModeTabs" role="tablist"></div>
+            <div class="time-controls" id="timeControlChips"></div>
 
             <div class="modal-actions">
                 <button id="beginGameButton" class="btn btn-primary btn-lg">Start game</button>

@@ -299,6 +299,33 @@
 
 /* Setup modal: four difficulty / time options fit on one row. */
 .setup-modal .segmented button { height: 44px; }
+
+/* Time modes (setup modal and history rating card): name + your rating in it. */
+.time-modes button, .rating-modes button { height: 50px; line-height: 1.15; }
+.tm-name { display: block; white-space: nowrap; }
+.tm-rating { display: block; margin-top: 2px; font: 700 11px var(--mono); color: var(--text-faint); }
+.time-modes button.selected .tm-rating, .rating-modes button.selected .tm-rating { color: var(--accent); }
+.time-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.time-chip {
+    flex: 1 1 0;
+    min-width: 70px;
+    height: 38px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text-dim);
+    font: 700 14px var(--mono);
+    cursor: pointer;
+    transition: background 150ms, border-color 150ms, color 150ms;
+}
+.time-chip:hover { color: var(--text); background: var(--surface-hover); }
+.time-chip.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.rating-modes { margin: 16px 20px 0; }
+@media (max-width: 480px) {
+    .time-modes button, .rating-modes button { padding: 0 2px; font-size: 12px; }
+    .time-chip { min-width: 56px; font-size: 13px; }
+    .rating-modes { margin: 12px 12px 0; }
+}
 .result-banner {
     display: flex;
     align-items: center;
