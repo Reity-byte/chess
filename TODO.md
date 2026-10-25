@@ -1106,16 +1106,23 @@ instead of a 6-panel stack.
    bubble's actions; jump-to-category from the Summary chips.
 
 ### B. Game over → review flow
-1. **Game-over card** (game page modal) gets richer: result + reason, animated rating change, and a
-   **quick accuracy preview** — start a Quick review in a background worker the moment the game ends
-   and show "Your accuracy 81% · 2 blunders · biggest moment 14.Qxe4+" when ready (with a spinner
-   until then). Buttons: **Full review** (primary), Rematch (same settings, colors swapped), New game,
-   Download PGN.
+1. **Game-over popup like chess.com's** (decided with the user): a small card over the board that asks
+   **Game Review** (primary) or **New game** / Rematch (same settings, colors swapped), with a preview
+   of how the game went. The moment the game ends, a Quick review runs in a background worker; the card
+   fills in as it finishes (spinner/skeleton until then):
+   - result + reason, animated rating change (as now);
+   - both players' **accuracy**;
+   - the **move grading** preview: a compact row per category with icon and count for each side
+     (Brilliant, Great, Best, Excellent, Good, Book, Inaccuracy, Mistake, Miss, Blunder — zero rows
+     hidden or dimmed), like chess.com's review card;
+   - optionally the biggest moment ("14.Qxe4+ ?? cost the win").
+   Small actions: Download PGN, close (×) to look at the final position.
 2. The full review then opens from the Quick result already cached (instant first paint) and refines to
-   Standard in the background (show a small "refining…" chip, swap results in place).
-3. **Guided review** (chess.com-style "coach walk-through"): on first open, the coach bubble offers
-   "▶ Walk me through it" → steps through the key moments (next/prev), each with its explanation and the
-   better move on the board; ends at "Retry your N mistakes?".
+   Standard in the background (show a small "refining…" chip, swap results in place). The review opens
+   on the **Moves** tab — the popup already showed the summary.
+3. **Guided review — only when the user asks** (decided): a "▶ Walk me through it" button in the coach
+   bubble / Summary tab steps through the key moments (next/prev), each with its explanation and the
+   better move on the board; ends at "Retry your N mistakes?". Never starts on its own.
 
 ### C. Visual polish (site-wide)
 1. Spacing/typography pass: one spacing scale, consistent panel headers, fewer borders (use surface
@@ -1125,8 +1132,8 @@ instead of a 6-panel stack.
 3. Review player strips show captured pieces + material difference (reuse the game page's code).
 4. Tab switch / panel transitions (150 ms fade/slide), eval bar + graph cursor easing, reduced-motion
    respected (already global).
-5. Optional (ask the user): **light theme** toggle in the Style panel (tokens already centralised in
-   theme.css); move sounds when stepping through the review (Style panel "Sound" covers it).
+5. Move sounds when stepping through the review (respecting the Style panel's Sound toggle).
+   No light theme — the user decided against it.
 
 ### Acceptance checks
 - 1366×768 and 1440×900: coach bubble, move list (≥ 10 rows), engine line, nav buttons and graph all
@@ -1140,10 +1147,11 @@ A1–A2 layout skeleton (tabs + pinned nav) → A3 graph strip → A2 Summary ta
 modal → A5 mobile → B1 game-over card with quick preview → B2 cached-then-refine → B3 guided review →
 C polish → acceptance screenshots. A is one session on its own; B + C the next.
 
-### Questions to settle at the start
-- Default tab after a game: Moves, or Summary first? (Plan assumes Moves + coach bubble.)
-- Should the guided walk-through start automatically after a game, or only on request?
-- Light theme: wanted or not?
+### Decided with the user (2026-10-25)
+- After a game: a chess.com-style popup — "Game Review" or "New game", with accuracy and the move-grading
+  counts as a preview. The review itself opens on the Moves tab.
+- Guided walk-through: only when the user asks for it.
+- Light theme: no.
 
 ---
 
