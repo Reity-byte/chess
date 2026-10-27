@@ -1095,6 +1095,19 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 📈 Session 34 — Puzzle stats
+
+- Every rated, daily and Rush attempt goes to `chessPuzzleHistory` (last 1000; short keys: id, r = puzzle rating,
+  t = themes, ok, h = hinted, m = mode, at, b / a = your rating before / after for rated ones).
+- Puzzles page has a third tab, **📈 Stats** (`?mode=stats`): rating graph (rated attempts, hover tips,
+  redrawn on resize), facts (rating, peak, puzzles, clean %, best clean streak, Rush bests), accuracy per theme
+  (clean = solved without a hint) with Practise buttons, a **Weakest** banner (lowest clean % among themes with
+  5+ tries, needs two such themes) with ▶ Train it, and the last 24 attempts (tap = look again, unrated).
+  On phones the board is hidden while the Stats tab is open.
+- Cache version `?v=32`.
+
+---
+
 ## ♞ Session 33 — Opening trainer
 
 - **Page:** `main/game/openings.html` + `openings-page.js` (nav shows Train; reached from the Train page's

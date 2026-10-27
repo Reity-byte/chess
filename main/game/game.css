@@ -992,6 +992,45 @@ body.app-shell { overflow: hidden; }
 .daily-text .muted { font-size: 12px; }
 .daily-panel.done { border-color: rgba(140, 200, 94, 0.35); }
 
+/* Puzzle stats */
+.stats-note { margin-left: auto; font-size: 12px; font-weight: 500; }
+.stats-facts { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); }
+.stats-facts > div { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 6px; text-align: center; }
+.stats-facts > div:nth-child(-n+3) { border-bottom: 1px solid var(--border); }
+.stats-facts strong { font: 800 18px var(--mono); }
+.stats-facts > div:last-child strong { font-size: 14px; padding-top: 3px; }
+.weakest { display: flex; align-items: center; gap: 12px; margin: 12px 14px 4px; padding: 12px; border-radius: 12px; background: var(--warning-soft); }
+.weakest > div { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; font-size: 14px; }
+.weakest .muted { font-size: 12px; }
+.theme-stats { display: flex; flex-direction: column; padding: 8px 8px 10px; }
+.theme-stat { display: grid; grid-template-columns: minmax(96px, 1.1fr) minmax(50px, 1fr) auto auto; align-items: center; gap: 10px; padding: 6px; border-radius: 8px; font-size: 13px; }
+.theme-stat.weak { background: var(--warning-soft); }
+.theme-stat-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.theme-bar { height: 8px; border-radius: 8px; background: var(--surface-3); overflow: hidden; }
+.theme-bar span { display: block; height: 100%; border-radius: 8px; }
+.theme-bar .good { background: var(--accent); }
+.theme-bar .mid { background: var(--warning); }
+.theme-bar .low { background: var(--danger); }
+.theme-stat-num { font: 700 12px var(--mono); white-space: nowrap; }
+.theme-stat-num small { color: var(--text-faint); font-weight: 600; }
+.theme-stat .btn { height: 28px; padding: 0 10px; font-size: 12px; }
+.recent-puzzles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; padding: 10px 12px 14px; }
+.recent-puzzle {
+    display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 9px; border-radius: 8px; min-width: 0;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: 600 12px var(--font);
+    cursor: pointer; text-align: left;
+}
+.recent-puzzle:hover:not(:disabled) { border-color: var(--border-strong); }
+.recent-puzzle.ok .recent-mark { color: var(--accent); }
+.recent-puzzle.bad .recent-mark { color: var(--danger); }
+.recent-mark { font-weight: 800; }
+.recent-rating { font-family: var(--mono); }
+.recent-theme { flex: 1; min-width: 0; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-tag { font-size: 10px; font-weight: 700; color: var(--warning); }
+@media (max-width: 960px) {
+    .puzzles-page.stats-mode .board-area { display: none; }
+}
+
 /* Puzzle Rush */
 .rush-title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
 .rush-setup p { font-size: 14px; line-height: 1.5; }

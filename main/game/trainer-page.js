@@ -375,7 +375,7 @@ const engineWaiting = new Map();
 
 function askEngine(message) {
     if (!engineWorker) {
-        try { engineWorker = new Worker('analysis-worker.js?v=30'); } catch (e) { return Promise.resolve(null); }
+        try { engineWorker = new Worker('analysis-worker.js?v=32'); } catch (e) { return Promise.resolve(null); }
         engineWorker.onmessage = (e) => {
             const d = e.data;
             const done = engineWaiting.get(d.requestId);

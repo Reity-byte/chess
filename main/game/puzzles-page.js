@@ -6,9 +6,10 @@
 // the game up to and including the opponent's mistake, `solution` the solver's
 // moves alternating with the forced replies.
 //
-// Two modes: Rated (Elo against the puzzle's rating, theme filter, a daily
-// puzzle) and Puzzle Rush (3 min / 5 min / Survival, ever harder puzzles, three
-// mistakes and out; it never touches the rating).
+// Modes: Rated (Elo against the puzzle's rating, theme filter, a daily puzzle),
+// Puzzle Rush (3 min / 5 min / Survival, ever harder puzzles, three mistakes
+// and out; it never touches the rating) and Stats (rating graph, accuracy per
+// theme, recent attempts — from localStorage['chessPuzzleHistory']).
 const RATING_KEY = 'chessPuzzleRating';
 const STREAK_KEY = 'chessPuzzleStreak';
 const SOLVED_KEY = 'chessPuzzleSolvedCount';
@@ -16,6 +17,8 @@ const DONE_KEY   = 'chessPuzzleSolvedIds'; // ids already seen, to avoid repeats
 const BANK_KEY   = 'chessPuzzleBank';
 const RUSH_KEY   = 'chessPuzzleRush';
 const DAILY_KEY  = 'chessPuzzleDaily';
+const HISTORY_KEY = 'chessPuzzleHistory'; // every attempt, for the Stats tab
+const HISTORY_CAP = 1000;
 
 const THEMES = [
     { key: 'all',          label: 'All' },
@@ -113,7 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderThemes();
     updateStats();
     renderDaily();
-    if (params.get('mode') === 'rush') setMode('rush');
+    if (params.get('mode') === 'rush' || params.get('mode') === 'stats') setMode(params.get('mode'));
     else nextPuzzle();
 });
 
@@ -135,18 +138,21 @@ function hasTheme(p, key) {
 }
 
 // ─── MODES ─────────────────────────────────────────────────────────────────────
-function setMode(next) {
+function setMode(next, { load = true } = {}) {
     if (rush && rush.timer) endRush('ended', { silent: true });
     mode = next;
     for (const b of $('modeTabs').querySelectorAll('button')) b.classList.toggle('selected', b.dataset.mode === mode);
-    const rated = mode === 'rated';
+    const rated = mode === 'rated', stats = mode === 'stats';
     $('ratedStats').classList.toggle('hidden', !rated);
     $('themePanel').classList.toggle('hidden', !rated);
     $('dailyPanel').classList.toggle('hidden', !rated);
     $('rushRun').classList.add('hidden');
     $('rushEnd').classList.add('hidden');
-    $('rushSetup').classList.toggle('hidden', rated);
-    if (rated) nextPuzzle();
+    $('rushSetup').classList.toggle('hidden', mode !== 'rush');
+    for (const id of ['statsGraphPanel', 'statsThemesPanel', 'statsRecentPanel']) $(id).classList.toggle('hidden', !stats);
+    document.querySelector('.puzzles-page').classList.toggle('stats-mode', stats);
+    if (stats) { $('promptPanel').classList.add('hidden'); renderStatsTab(); }
+    else if (rated) { if (load) nextPuzzle(); }
     else showRushSetup();
 }
 
@@ -452,6 +458,7 @@ function afterPuzzle() {
 // Elo update against the puzzle's rating; returns the change, or null when unrated.
 function rateResult(success) {
     if (!run.rated) return null;
+    const before = rating;
     const expected = 1 / (1 + Math.pow(10, (run.p.rating - rating) / 400));
     let delta = Math.round(24 * ((success ? 1 : 0) - expected));
     if (success && run.hinted) delta = Math.round(delta / 2);
@@ -464,6 +471,7 @@ function rateResult(success) {
     save(STREAK_KEY, String(streak));
     save(SOLVED_KEY, String(solvedCount));
     save(DONE_KEY, seenIds);
+    recordAttempt(success, before, rating);
     updateStats();
     const el = $('ratingDelta');
     el.textContent = `${delta >= 0 ? '+' : ''}${delta}`;
@@ -549,6 +557,7 @@ function rushResult(ok, san) {
     const current = run;
     run.done = true;
     rush.results.push({ p: run.p, ok });
+    recordAttempt(ok, null, null);
     if (ok) {
         rush.score++;
         $('puzzleResult').textContent = '✓ Solved';
@@ -624,4 +633,158 @@ function endRush(reason, { silent = false } = {}) {
     $('rushResults').classList.toggle('hidden', !rush.results.length);
     $('rushResultsHelp').classList.toggle('hidden', !rush.results.length);
     $('promptPanel').classList.add('hidden');
+}
+
+// ─── STATS ─────────────────────────────────────────────────────────────────────
+// Attempt log entries (short keys keep it small): { id, r: puzzle rating,
+// t: themes, ok, h: hinted, m: rated | daily | rush, at: time,
+// b / a: your rating before / after (rated attempts only) }.
+function recordAttempt(ok, before, after) {
+    const log = loadJSON(HISTORY_KEY, []);
+    const e = { id: run.p.id, r: run.p.rating, t: run.p.themes, ok: !!ok, h: run.hinted ? 1 : 0, m: run.kind, at: Date.now() };
+    if (before !== null) { e.b = before; e.a = after; }
+    log.push(e);
+    save(HISTORY_KEY, log.slice(-HISTORY_CAP));
+}
+
+const cleanSolve = (e) => e.ok && !e.h;
+const pct = (n, d) => (d ? Math.round(100 * n / d) : 0);
+
+function renderStatsTab() {
+    const log = loadJSON(HISTORY_KEY, []);
+    const ratedLog = log.filter(e => e.b !== undefined);
+    renderPuzzleGraph(ratedLog);
+
+    let best = 0, cur = 0;
+    for (const e of ratedLog) { cur = cleanSolve(e) ? cur + 1 : 0; best = Math.max(best, cur); }
+    const rushData = rushBest();
+    const facts = [
+        ['Rating', Math.round(rating)],
+        ['Peak', ratedLog.length ? Math.max(...ratedLog.map(e => e.a), Math.round(rating)) : '—'],
+        ['Puzzles', log.length],
+        ['Clean', log.length ? `${pct(log.filter(cleanSolve).length, log.length)}%` : '—'],
+        ['Best streak', best],
+        ['Rush best', ['3', '5', 'survival'].map(k => rushData.best[k] || 0).join(' · ')],
+    ];
+    $('statsFacts').innerHTML = facts.map(([k, v]) => `<div><span class="eyebrow">${k}</span><strong>${v}</strong></div>`).join('');
+    $('statsFacts').lastElementChild.title = 'Best Puzzle Rush scores: 3 min · 5 min · Survival';
+    $('statsGraphNote').textContent = ratedLog.length ? `${ratedLog.length} rated` : '';
+
+    // Accuracy per theme (themes with at least one attempt); the weakest needs 5+ tries.
+    const rows = THEMES.filter(t => t.key !== 'all').map(t => {
+        const tries = log.filter(e => hasTheme({ themes: e.t || [] }, t.key));
+        return { t, n: tries.length, good: tries.filter(cleanSolve).length };
+    }).filter(r => r.n);
+    const ranked = rows.filter(r => r.n >= 5 && r.t.key !== 'yourGames').sort((a, b) => a.good / a.n - b.good / b.n);
+    const weakest = ranked.length >= 2 ? ranked[0] : null;
+    const wrap = $('themeStats');
+    wrap.innerHTML = rows.length ? '' : '<div class="moves-empty">Solve a few puzzles — your accuracy per theme shows up here.</div>';
+    for (const r of rows) {
+        const acc = pct(r.good, r.n);
+        const row = document.createElement('div');
+        row.className = 'theme-stat' + (r === weakest ? ' weak' : '');
+        row.innerHTML = `<span class="theme-stat-name">${esc(r.t.label)}</span>`
+            + `<span class="theme-bar"><span style="width:${acc}%" class="${acc >= 70 ? 'good' : acc >= 45 ? 'mid' : 'low'}"></span></span>`
+            + `<span class="theme-stat-num">${acc}% <small>${r.good}/${r.n}</small></span>`;
+        const b = document.createElement('button');
+        b.className = 'btn';
+        b.textContent = 'Practise';
+        b.addEventListener('click', () => practiseTheme(r.t.key));
+        row.appendChild(b);
+        wrap.appendChild(row);
+    }
+    const weakEl = $('weakestTheme');
+    weakEl.classList.toggle('hidden', !weakest);
+    weakEl.innerHTML = '';
+    if (weakest) {
+        weakEl.innerHTML = `<div><strong>Weakest: ${esc(weakest.t.label)}</strong><span class="muted">${pct(weakest.good, weakest.n)}% clean over ${weakest.n} puzzles</span></div>`;
+        const b = document.createElement('button');
+        b.className = 'btn btn-primary';
+        b.textContent = '▶ Train it';
+        b.addEventListener('click', () => practiseTheme(weakest.t.key));
+        weakEl.appendChild(b);
+    }
+
+    // Recent attempts, newest first.
+    const recent = $('recentPuzzles');
+    recent.innerHTML = log.length ? '' : '<div class="moves-empty">No puzzles yet.</div>';
+    for (const e of log.slice(-24).reverse()) {
+        const p = allPuzzles.find(x => x.id === e.id);
+        const main = (e.t || []).find(t => THEME_NAMES[t] && !['oneMove', 'mate', 'long', 'advantage'].includes(t)) || (e.t || [])[0];
+        const b = document.createElement('button');
+        b.className = `recent-puzzle ${e.ok ? (e.h ? 'hinted' : 'ok') : 'bad'}`;
+        b.innerHTML = `<span class="recent-mark">${e.ok ? (e.h ? '💡' : '✓') : '✗'}</span><span class="recent-rating">${e.r}</span>`
+            + `<span class="recent-theme">${esc(THEME_NAMES[main] || '')}</span>`
+            + (e.m === 'rush' ? '<span class="recent-tag">Rush</span>' : e.m === 'daily' ? '<span class="recent-tag">Daily</span>' : '');
+        b.title = new Date(e.at).toLocaleString();
+        if (p) {
+            b.addEventListener('click', () => {
+                setMode('rated', { load: false });
+                startPuzzle(p, { kind: 'review', rated: false });
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        } else b.disabled = true;
+        recent.appendChild(b);
+    }
+}
+
+// The graph is drawn at its on-screen width, so redraw it when that changes.
+let graphResize = null;
+window.addEventListener('resize', () => {
+    clearTimeout(graphResize);
+    graphResize = setTimeout(() => { if (mode === 'stats') renderPuzzleGraph(loadJSON(HISTORY_KEY, []).filter(e => e.b !== undefined)); }, 150);
+});
+
+function practiseTheme(key) {
+    theme = THEMES.some(t => t.key === key) ? key : 'all';
+    renderThemes();
+    setMode('rated');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function renderPuzzleGraph(ratedLog) {
+    const svg = $('puzzleGraph');
+    const W = Math.max(240, svg.clientWidth || 360), H = 150, padL = 40, padB = 8, padT = 10;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = '';
+    const NS = 'http://www.w3.org/2000/svg';
+    const add = (tag, attrs, text) => {
+        const el = document.createElementNS(NS, tag);
+        for (const k in attrs) el.setAttribute(k, attrs[k]);
+        if (text !== undefined) el.textContent = text;
+        svg.appendChild(el);
+        return el;
+    };
+    if (!ratedLog.length) {
+        add('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', class: 'graph-empty' }, 'Solve a rated puzzle to start your graph.');
+        return;
+    }
+    const points = [{ v: ratedLog[0].b, e: null }].concat(ratedLog.map(e => ({ v: e.a, e })));
+    const values = points.map(p => p.v);
+    let lo = Math.min(...values), hi = Math.max(...values);
+    const pad = Math.max(20, (hi - lo) * 0.15);
+    lo = Math.floor((lo - pad) / 50) * 50; hi = Math.ceil((hi + pad) / 50) * 50;
+    const x = (i) => padL + (points.length === 1 ? 0 : (i / (points.length - 1)) * (W - padL - 8));
+    const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+    for (const v of [lo, (lo + hi) / 2, hi]) {
+        add('line', { x1: padL, x2: W - 4, y1: y(v), y2: y(v), class: 'grid' });
+        add('text', { x: padL - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'axis' }, Math.round(v));
+    }
+    const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+    add('path', { d: `${path} L${x(points.length - 1).toFixed(1)},${H - padB} L${x(0).toFixed(1)},${H - padB} Z`, class: 'area' });
+    add('path', { d: path, class: 'line' });
+    if (points.length <= 80) points.forEach((p, i) => { if (p.e) add('circle', { cx: x(i), cy: y(p.v), r: 3, class: 'dot ' + (p.e.ok ? 'win' : 'loss') }); });
+
+    const tip = $('puzzleTip');
+    svg.onpointermove = (ev) => {
+        const r = svg.getBoundingClientRect();
+        const rel = ((ev.clientX - r.left) / r.width) * W;
+        let best = 0;
+        points.forEach((p, i) => { if (Math.abs(x(i) - rel) < Math.abs(x(best) - rel)) best = i; });
+        const p = points[best];
+        tip.textContent = p.e ? `${p.v} · ${p.e.ok ? '✓' : '✗'} ★${p.e.r} · ${new Date(p.e.at).toLocaleDateString()}` : `${p.v} · start`;
+        tip.style.left = `${Math.min(r.width - 70, Math.max(70, (x(best) / W) * r.width))}px`;
+        tip.classList.remove('hidden');
+    };
+    svg.onpointerleave = () => tip.classList.add('hidden');
 }

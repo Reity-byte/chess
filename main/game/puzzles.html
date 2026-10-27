@@ -4,21 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Puzzles · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=30">
-    <link rel="stylesheet" href="../pieces.css?v=30">
-    <script src="../style-settings.js?v=30"></script>
+    <link rel="stylesheet" href="../theme.css?v=32">
+    <link rel="stylesheet" href="../pieces.css?v=32">
+    <script src="../style-settings.js?v=32"></script>
     <link rel="manifest" href="../manifest.webmanifest">
     <meta name="theme-color" content="#111317">
     <link rel="icon" type="image/png" href="../icons/icon-192.png">
     <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
-    <script src="../app.js?v=30" defer></script>
-    <link rel="stylesheet" href="game.css?v=30">
-    <script src="engine.js?v=30" defer></script>
-    <script src="notation.js?v=30" defer></script>
-    <script src="sound.js?v=30" defer></script>
-    <script src="board-ui.js?v=30" defer></script>
-    <script src="puzzle-library.js?v=30" defer></script>
-    <script src="puzzles-page.js?v=30" defer></script>
+    <script src="../app.js?v=32" defer></script>
+    <link rel="stylesheet" href="game.css?v=32">
+    <script src="engine.js?v=32" defer></script>
+    <script src="notation.js?v=32" defer></script>
+    <script src="sound.js?v=32" defer></script>
+    <script src="board-ui.js?v=32" defer></script>
+    <script src="puzzle-library.js?v=32" defer></script>
+    <script src="puzzles-page.js?v=32" defer></script>
 </head>
 <body>
 
@@ -46,7 +46,8 @@
         <aside class="side">
             <div class="segmented puzzle-modes" id="modeTabs">
                 <button data-mode="rated" class="selected">Rated</button>
-                <button data-mode="rush">⚡ Puzzle Rush</button>
+                <button data-mode="rush">⚡ Rush</button>
+                <button data-mode="stats">📈 Stats</button>
             </div>
 
             <!-- ── RATED ──────────────────────────────────────────────────────── -->
@@ -91,6 +92,25 @@
                         <button class="btn" id="rushModes">Change mode</button>
                     </div>
                 </div>
+            </div>
+
+            <!-- ── STATS ──────────────────────────────────────────────────────── -->
+            <div class="panel hidden" id="statsGraphPanel">
+                <div class="panel-header">Puzzle rating <span class="muted stats-note" id="statsGraphNote"></span></div>
+                <div class="graph-wrap">
+                    <svg class="rating-graph" id="puzzleGraph" role="img" aria-label="Puzzle rating over time"></svg>
+                    <div class="graph-tip hidden" id="puzzleTip"></div>
+                </div>
+                <div class="stats-facts" id="statsFacts"></div>
+            </div>
+            <div class="panel hidden" id="statsThemesPanel">
+                <div class="panel-header">By theme <span class="muted stats-note">solved without a hint</span></div>
+                <div class="weakest hidden" id="weakestTheme"></div>
+                <div class="theme-stats" id="themeStats"></div>
+            </div>
+            <div class="panel hidden" id="statsRecentPanel">
+                <div class="panel-header">Recent puzzles <span class="muted stats-note">tap to look again</span></div>
+                <div class="recent-puzzles" id="recentPuzzles"></div>
             </div>
 
             <!-- ── THE PUZZLE ON THE BOARD ────────────────────────────────────── -->
