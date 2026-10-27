@@ -1095,6 +1095,27 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## ♞ Session 33 — Opening trainer
+
+- **Page:** `main/game/openings.html` + `openings-page.js` (nav shows Train; reached from the Train page's
+  "Opening trainer" card and its ← Train link). Repertoire cards (side badge, progress, due chip), a line list
+  per repertoire (New / Review / ✓ next in Nd / ★ Mastered) and an inline drill board.
+- **Repertoires:** `opening-repertoires.js` — Italian Game (White, 7 lines incl. Philidor, Petrov, Petrov
+  3...Nxe4 trap, Blackburne Shilling), London System (White, 5), Caro-Kann (Black, 7), Queen's Gambit
+  Declined (Black, 6 incl. Catalan and vs London). Lines are SAN with `{notes}` on your moves; every position
+  where it's your move has exactly one repertoire move. Line ids are stored with progress — never renumber.
+  `tests/openings.js` (in `npm test`) checks legality, the one-move rule, lines end on your move, no line is a
+  prefix of another, and no move of yours loses > 150 cp to the engine's choice.
+- **Drill:** Learn = arrows + notes, wrong moves just bounce; then the same line once from memory right away.
+  From memory: a wrong move or "Show move" shows the right move (play it to continue), 💡 Hint highlights the
+  piece; both count as a miss. Clean → next box (1 / 3 / 7 / 21 days, box 5 = mastered); miss → box 0, due
+  today and re-queued at the end of the session. Store: `chessOpenings` = { lines: { id: { box, due, reviews,
+  misses } }, repertoire }. Opening training also marks the day in `chessTraining.days` (Train day streak).
+- Cache version `?v=30`.
+- Ideas: tell the player after a game where they left their repertoire (review page); custom repertoires.
+
+---
+
 ## 🧩 Session 32 — Puzzle library, themes, daily puzzle and Puzzle Rush
 
 - **Library:** `main/game/puzzle-library.js` (GENERATED, 500 puzzles, ~170 KB, works offline) from
@@ -1349,6 +1370,7 @@ I have a vanilla JS chess site:
   tools/release.js        (npm run release: bump ?v= and regenerate the offline file list)
   main/transfer.js, vendor/   (move data between devices: animated QR codes, backup file)
   main/game/trainer.html, trainer-page.js   (Trainer: focus areas, practice list, next game)
+  main/game/openings.html, openings-page.js, opening-repertoires.js   (Opening trainer: repertoires + spaced repetition)
   main/game/ai-worker.js  (live-game engine worker)
   main/game/notation.js   (SAN generation + resolveSAN/replaySANFromStart)
   main/game/analysis.html, analysis-page.js   (Game Review page)

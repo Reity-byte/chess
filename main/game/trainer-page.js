@@ -151,6 +151,19 @@ function render() {
     renderNumbers(games, reviewed);
     renderNextGame(games);
     renderUnreviewed(games);
+    renderOpeningsCard();
+}
+
+// The Opening Trainer's progress (openings.html, chessOpenings).
+function renderOpeningsCard() {
+    if (typeof OPENING_REPERTOIRES === 'undefined') return;
+    let lines = {};
+    try { lines = (JSON.parse(localStorage.getItem('chessOpenings')) || {}).lines || {}; } catch (e) { lines = {}; }
+    const all = OPENING_REPERTOIRES.flatMap(r => r.lines);
+    const learned = all.filter(l => lines[l.id]).length;
+    const due = all.filter(l => lines[l.id] && lines[l.id].box < 5 && lines[l.id].due <= today()).length;
+    $('openingsCardSub').textContent = !learned ? `${OPENING_REPERTOIRES.length} repertoires, ${all.length} lines to learn.`
+        : `${learned} of ${all.length} lines learned${due ? ` · ${due} due today` : ''}`;
 }
 
 function renderHero(games) {
@@ -362,7 +375,7 @@ const engineWaiting = new Map();
 
 function askEngine(message) {
     if (!engineWorker) {
-        try { engineWorker = new Worker('analysis-worker.js?v=28'); } catch (e) { return Promise.resolve(null); }
+        try { engineWorker = new Worker('analysis-worker.js?v=30'); } catch (e) { return Promise.resolve(null); }
         engineWorker.onmessage = (e) => {
             const d = e.data;
             const done = engineWaiting.get(d.requestId);

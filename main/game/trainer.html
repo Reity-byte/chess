@@ -4,24 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trainer · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=28">
-    <link rel="stylesheet" href="../pieces.css?v=28">
-    <script src="../style-settings.js?v=28"></script>
+    <link rel="stylesheet" href="../theme.css?v=30">
+    <link rel="stylesheet" href="../pieces.css?v=30">
+    <script src="../style-settings.js?v=30"></script>
     <link rel="manifest" href="../manifest.webmanifest">
     <meta name="theme-color" content="#111317">
     <link rel="icon" type="image/png" href="../icons/icon-192.png">
     <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
-    <script src="../app.js?v=28" defer></script>
-    <link rel="stylesheet" href="game.css?v=28">
-    <script src="engine.js?v=28" defer></script>
-    <script src="notation.js?v=28" defer></script>
-    <script src="analysis.js?v=28" defer></script>
-    <script src="strength.js?v=28" defer></script>
-    <script src="sound.js?v=28" defer></script>
-    <script src="board-ui.js?v=28" defer></script>
-    <script src="history-store.js?v=28" defer></script>
-    <script src="ratings.js?v=28" defer></script>
-    <script src="trainer-page.js?v=28" defer></script>
+    <script src="../app.js?v=30" defer></script>
+    <link rel="stylesheet" href="game.css?v=30">
+    <script src="engine.js?v=30" defer></script>
+    <script src="notation.js?v=30" defer></script>
+    <script src="analysis.js?v=30" defer></script>
+    <script src="strength.js?v=30" defer></script>
+    <script src="sound.js?v=30" defer></script>
+    <script src="board-ui.js?v=30" defer></script>
+    <script src="history-store.js?v=30" defer></script>
+    <script src="ratings.js?v=30" defer></script>
+    <script src="opening-repertoires.js?v=30" defer></script>
+    <script src="trainer-page.js?v=30" defer></script>
 </head>
 <body>
 
@@ -100,6 +101,11 @@
                 <div class="practice-list" id="practiceList"></div>
             </div>
             <div class="trainer-side">
+                <a class="panel openings-card" href="openings.html" id="openingsCard">
+                    <span class="openings-icon">♞</span>
+                    <span class="openings-text"><strong>Opening trainer</strong><span class="muted" id="openingsCardSub">Learn a repertoire line by line.</span></span>
+                    <span class="btn">Open</span>
+                </a>
                 <div class="panel">
                     <div class="panel-header">Your numbers</div>
                     <div class="number-grid" id="numberGrid"></div>

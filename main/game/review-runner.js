@@ -6,7 +6,7 @@
 // after-game preview, together with the one-entry review cache between them.
 const MAX_ANALYSIS_WORKERS = 8;
 const MIN_RANGE = 4;
-const ANALYSIS_WORKER_URL = 'analysis-worker.js?v=28';
+const ANALYSIS_WORKER_URL = 'analysis-worker.js?v=30';
 const ANALYSIS_CACHE_KEY = 'chessAnalysisCache';
 
 // callbacks: { onStart(opening), onMove(entry, startEval, received), onFinalizing(),

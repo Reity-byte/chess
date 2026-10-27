@@ -813,8 +813,8 @@ body.app-shell { overflow: hidden; }
 .session-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .session-actions .btn { height: 40px; }
 .session-actions .btn-primary { margin-left: auto; }
-#trainBoard.flash-good, #chessboard.flash-good { animation: flashGood 650ms ease-out; }
-#trainBoard.flash-bad, #chessboard.flash-bad { animation: flashBad 500ms ease-out; }
+#trainBoard.flash-good, #chessboard.flash-good, #openingBoard.flash-good { animation: flashGood 650ms ease-out; }
+#trainBoard.flash-bad, #chessboard.flash-bad, #openingBoard.flash-bad { animation: flashBad 500ms ease-out; }
 @keyframes flashGood { 0% { box-shadow: 0 0 0 0 rgba(140, 200, 94, 0.9); } 100% { box-shadow: 0 0 0 18px rgba(140, 200, 94, 0); } }
 @keyframes flashBad {
     0%, 100% { transform: none; box-shadow: 0 0 0 0 rgba(239, 94, 85, 0.85); }
@@ -829,6 +829,39 @@ body.app-shell { overflow: hidden; }
 .position-filter { margin-left: auto; padding: 3px; }
 .position-filter button { height: 28px; font-size: 12px; }
 .practice-note { padding: 10px 12px; font-size: 12px; color: var(--text-faint); }
+.status-chip.new-line { background: rgba(98, 168, 255, 0.15); color: var(--info); }
+
+/* Opening trainer */
+.back-link { font-size: 13px; font-weight: 600; color: var(--text-dim); text-decoration: none; margin-bottom: 4px; }
+.back-link:hover { color: var(--text); }
+.repertoire-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+.repertoire-card {
+    display: flex; flex-direction: column; gap: 8px; padding: 16px; text-align: left; cursor: pointer;
+    color: var(--text); font: inherit; transition: border-color 150ms, transform 150ms;
+}
+.repertoire-card:hover { border-color: var(--border-strong); }
+.repertoire-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.repertoire-card h3 { font-size: 17px; font-weight: 800; }
+.repertoire-card p { font-size: 13px; color: var(--text-dim); line-height: 1.45; flex: 1; }
+.repertoire-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.side-badge { padding: 3px 9px; border-radius: 6px; font: 800 11px var(--font); letter-spacing: 0.04em; text-transform: uppercase; }
+.side-badge.white { background: #eef0f2; color: #15171b; }
+.side-badge.black { background: #0b0c0e; color: #eef0f2; box-shadow: inset 0 0 0 1px var(--border-strong); }
+.repertoire-progress { height: 6px; border-radius: 6px; background: var(--surface-3); overflow: hidden; }
+.repertoire-progress div { height: 100%; background: var(--accent); border-radius: 6px; }
+.repertoire-count { font-size: 12px; font-weight: 700; color: var(--text-faint); }
+.line-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.line-panel-actions .btn { height: 34px; font-size: 13px; }
+#linePanel .panel-header { flex-wrap: wrap; }
+#linePanel .practice-main strong { font-family: var(--font); }
+#lineList .practice-sub { font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.line-moves { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); font: 13px/1.5 var(--mono); }
+.line-moves .san-line { flex: 1; min-width: 0; }
+.line-progress { flex-shrink: 0; font-size: 12px; color: var(--text-faint); }
+.openings-card { display: flex; align-items: center; gap: 14px; padding: 16px; }
+.openings-card .openings-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.openings-card .openings-text strong { font-size: 15px; }
+.openings-card .openings-icon { font-size: 28px; }
 @media (max-width: 760px) {
     .session-body { grid-template-columns: 1fr; justify-items: center; }
     .session-side { width: 100%; }
