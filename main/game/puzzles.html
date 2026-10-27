@@ -4,20 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Puzzles · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=25">
-    <link rel="stylesheet" href="../pieces.css?v=25">
-    <script src="../style-settings.js?v=25"></script>
+    <link rel="stylesheet" href="../theme.css?v=28">
+    <link rel="stylesheet" href="../pieces.css?v=28">
+    <script src="../style-settings.js?v=28"></script>
     <link rel="manifest" href="../manifest.webmanifest">
     <meta name="theme-color" content="#111317">
     <link rel="icon" type="image/png" href="../icons/icon-192.png">
     <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
-    <script src="../app.js?v=25" defer></script>
-    <link rel="stylesheet" href="game.css?v=25">
-    <script src="engine.js?v=25" defer></script>
-    <script src="notation.js?v=25" defer></script>
-    <script src="board-ui.js?v=25" defer></script>
-    <script src="puzzle-bank.js?v=25" defer></script>
-    <script src="puzzles-page.js?v=25" defer></script>
+    <script src="../app.js?v=28" defer></script>
+    <link rel="stylesheet" href="game.css?v=28">
+    <script src="engine.js?v=28" defer></script>
+    <script src="notation.js?v=28" defer></script>
+    <script src="sound.js?v=28" defer></script>
+    <script src="board-ui.js?v=28" defer></script>
+    <script src="puzzle-library.js?v=28" defer></script>
+    <script src="puzzles-page.js?v=28" defer></script>
 </head>
 <body>
 
@@ -37,13 +38,19 @@
         </div>
     </header>
 
-    <main class="play-page">
+    <main class="play-page puzzles-page">
         <section class="board-area">
             <div id="chessboard"></div>
         </section>
 
         <aside class="side">
-            <div class="panel">
+            <div class="segmented puzzle-modes" id="modeTabs">
+                <button data-mode="rated" class="selected">Rated</button>
+                <button data-mode="rush">⚡ Puzzle Rush</button>
+            </div>
+
+            <!-- ── RATED ──────────────────────────────────────────────────────── -->
+            <div class="panel" id="ratedStats">
                 <div class="stat-row">
                     <div class="stat"><span class="eyebrow">Rating</span><strong id="puzzleRatingValue">1200</strong><span class="stat-delta" id="ratingDelta"></span></div>
                     <div class="stat"><span class="eyebrow">Streak</span><strong id="puzzleStreakValue">0</strong><span class="stat-delta"></span></div>
@@ -51,28 +58,73 @@
                 </div>
             </div>
 
-            <div class="panel">
+            <!-- ── RUSH: pick a mode ──────────────────────────────────────────── -->
+            <div class="panel rush-setup hidden" id="rushSetup">
+                <div class="panel-body">
+                    <h2 class="rush-title">Puzzle Rush</h2>
+                    <p class="muted">Solve as many as you can. They start easy and get harder. Three mistakes and you're out.</p>
+                    <div class="rush-options" id="rushOptions">
+                        <button class="rush-option selected" data-rush="3"><strong>3 min</strong><span>Best <b data-best="3">0</b></span></button>
+                        <button class="rush-option" data-rush="5"><strong>5 min</strong><span>Best <b data-best="5">0</b></span></button>
+                        <button class="rush-option" data-rush="survival"><strong>Survival</strong><span>Best <b data-best="survival">0</b></span></button>
+                    </div>
+                    <button class="btn btn-primary btn-lg rush-start" id="rushStart">▶ Start</button>
+                </div>
+            </div>
+
+            <!-- ── RUSH: running ──────────────────────────────────────────────── -->
+            <div class="panel rush-run hidden" id="rushRun">
+                <div class="rush-clock" id="rushClock">3:00</div>
+                <div class="rush-score"><span class="eyebrow">Score</span><strong id="rushScore">0</strong></div>
+                <div class="rush-strikes" id="rushStrikes" aria-label="Mistakes"><span></span><span></span><span></span></div>
+            </div>
+
+            <!-- ── RUSH: result ───────────────────────────────────────────────── -->
+            <div class="panel rush-end hidden" id="rushEnd">
+                <div class="panel-body">
+                    <div class="eyebrow" id="rushEndMode">3 min</div>
+                    <div class="rush-final"><strong id="rushFinal">0</strong><span id="rushFinalNote"></span></div>
+                    <div class="rush-results" id="rushResults"></div>
+                    <p class="muted rush-results-help" id="rushResultsHelp">Tap a puzzle to look at it again (unrated).</p>
+                    <div class="rush-end-actions">
+                        <button class="btn btn-primary" id="rushAgain">▶ Play again</button>
+                        <button class="btn" id="rushModes">Change mode</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── THE PUZZLE ON THE BOARD ────────────────────────────────────── -->
+            <div class="panel" id="promptPanel">
                 <div class="puzzle-prompt">
                     <span class="turn-swatch white" id="turnSwatch"></span>
                     <div>
                         <div class="status-text" id="puzzleCaption">Loading puzzles…</div>
                         <div class="status-sub" id="puzzleSub"></div>
                     </div>
-                    <span class="chip" id="puzzleRatingChip" style="margin-left:auto" hidden></span>
+                    <span class="chip hidden" id="puzzleRatingChip" style="margin-left:auto"></span>
                 </div>
                 <div class="puzzle-result" id="puzzleResult"></div>
-                <div class="panel-footer">
+                <div class="puzzle-themes hidden" id="puzzleThemes"></div>
+                <div class="panel-footer" id="puzzleFooter">
                     <button id="hintButton" class="btn">💡 Hint</button>
                     <button id="giveUpButton" class="btn">Show solution</button>
+                    <button id="rushEndButton" class="btn hidden">End run</button>
                     <button id="nextPuzzleButton" class="btn btn-primary hidden" style="margin-left:auto">Next puzzle →</button>
                 </div>
             </div>
 
-            <div class="panel">
-                <div class="panel-body muted" style="font-size:13px">
-                    Every position comes from a real game: the side to move can punish the
-                    previous move. Puzzles from your own reviewed games are added automatically.
+            <div class="panel" id="themePanel">
+                <div class="panel-header">Themes</div>
+                <div class="theme-chips" id="themeChips"></div>
+            </div>
+
+            <div class="panel daily-panel" id="dailyPanel">
+                <div class="daily-icon">📅</div>
+                <div class="daily-text">
+                    <strong>Daily puzzle</strong>
+                    <span class="muted" id="dailySub">A new one every day.</span>
                 </div>
+                <button class="btn" id="dailyButton">Solve</button>
             </div>
         </aside>
     </main>

@@ -1237,7 +1237,7 @@ function startLive() {
             const run = liveRun;
             liveTimer = setTimeout(() => {
                 if (run !== liveRun) return;
-                try { liveWorker = new Worker('analysis-worker.js?v=25'); } catch (e) { return; }
+                try { liveWorker = new Worker('analysis-worker.js?v=28'); } catch (e) { return; }
                 liveWorker.onmessage = (e) => {
                     const d = e.data;
                     if (run !== liveRun || d.type !== 'live') return;
@@ -1323,7 +1323,7 @@ const judgeWaiting = new Map();
 
 function judgeMove(sanMoves, san) {
     if (!judgeWorker) {
-        try { judgeWorker = new Worker('analysis-worker.js?v=25'); } catch (e) { return Promise.reject(e); }
+        try { judgeWorker = new Worker('analysis-worker.js?v=28'); } catch (e) { return Promise.reject(e); }
         judgeWorker.onmessage = (e) => {
             const d = e.data;
             const waiting = judgeWaiting.get(d.requestId);

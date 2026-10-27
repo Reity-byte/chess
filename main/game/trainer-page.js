@@ -27,6 +27,11 @@ const MOTIF_INFO = {
     missedFork:    { label: 'Missing forks', tip: 'Look for moves that attack two things at once, especially knight jumps and queen checks.' },
     missedWin:     { label: 'Missing free material', tip: 'After each opponent move ask: what did that leave undefended? Then look at your captures.' },
 };
+// The puzzle theme (puzzles.html?theme=) that practises each motif.
+const MOTIF_PUZZLES = {
+    hangs: 'hangingPiece', losesMaterial: 'advantage', allowsFork: 'fork', missedFork: 'fork',
+    allowsMate: 'mate', missedMate: 'mate', missedWin: 'hangingPiece',
+};
 const PHASE_INFO = {
     opening:    { label: 'Opening', tip: 'Develop knights and bishops, castle early and fight for the centre — and avoid moving the same piece twice or bringing the queen out early.' },
     middlegame: { label: 'Middlegame', tip: 'Most games are decided here. Slow down on every capture and check, and use Coach mode to get each move graded while you play.' },
@@ -197,6 +202,7 @@ function renderFocus(reviewed) {
             tip: MOTIF_INFO[motif].tip,
             progress: own.length ? `${own.length - ready} of ${own.length} fixed` : null,
             action: ready ? { label: `▶ Train these (${ready})`, run: () => startSession({ motif }) } : null,
+            puzzles: MOTIF_PUZZLES[motif],
         });
     }
     const phaseAvg = {};
@@ -226,16 +232,23 @@ function renderFocus(reviewed) {
         card.className = 'panel focus-card';
         card.innerHTML = `<div class="focus-rank">${i + 1}</div><h3>${esc(c.title)}</h3><div class="focus-stat">${esc(c.stat)}</div><p>${esc(c.tip)}</p>`
             + (c.progress ? `<div class="focus-progress">${esc(c.progress)}</div>` : '');
+        const row = document.createElement('div');
+        row.className = 'focus-actions';
         if (c.action) {
             const b = document.createElement('button');
             b.className = 'btn btn-primary';
             b.textContent = c.action.label;
             b.addEventListener('click', c.action.run);
-            const row = document.createElement('div');
-            row.className = 'focus-actions';
             row.appendChild(b);
-            card.appendChild(row);
         }
+        if (c.puzzles) {
+            const a = document.createElement('a');
+            a.className = 'btn';
+            a.href = `puzzles.html?theme=${c.puzzles}`;
+            a.textContent = '🧩 Puzzles';
+            row.appendChild(a);
+        }
+        if (row.children.length) card.appendChild(row);
         list.appendChild(card);
     });
 }
@@ -349,7 +362,7 @@ const engineWaiting = new Map();
 
 function askEngine(message) {
     if (!engineWorker) {
-        try { engineWorker = new Worker('analysis-worker.js?v=25'); } catch (e) { return Promise.resolve(null); }
+        try { engineWorker = new Worker('analysis-worker.js?v=28'); } catch (e) { return Promise.resolve(null); }
         engineWorker.onmessage = (e) => {
             const d = e.data;
             const done = engineWaiting.get(d.requestId);
