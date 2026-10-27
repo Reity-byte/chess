@@ -46,7 +46,10 @@ function reviewHistoryFields(report) {
             if (m.color !== color) continue;
             if (m.motif && m.winLoss >= 5) motifs[m.motif] = (motifs[m.motif] || 0) + 1;
             if (MISTAKE_CATEGORIES.includes(m.category) && m.bestMove) {
-                mistakes.push({ ply: m.ply, san: m.san, category: m.category, motif: m.motif || null, reason: m.reason || null, winLoss: m.winLoss });
+                mistakes.push({
+                    ply: m.ply, san: m.san, category: m.category, motif: m.motif || null, reason: m.reason || null, winLoss: m.winLoss,
+                    best: m.bestMove.san, line: (m.bestLine || []).slice(0, 6),
+                });
             }
         }
         return { counts: report.counts[color], motifs, mistakes };

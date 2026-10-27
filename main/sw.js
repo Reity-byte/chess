@@ -5,7 +5,7 @@
 // you're online) and everything else cache-first — CSS and JS URLs carry the
 // ?v= release number, so a new release means new URLs, never stale files.
 // Same-origin files missing from the list are cached the first time they load.
-importScripts('precache.js?v=24');
+importScripts('precache.js?v=25');
 
 const CACHE = `chess-${PRECACHE_VERSION}`;
 

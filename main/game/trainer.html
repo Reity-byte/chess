@@ -4,20 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trainer · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=24">
-    <link rel="stylesheet" href="../pieces.css?v=24">
-    <script src="../style-settings.js?v=24"></script>
+    <link rel="stylesheet" href="../theme.css?v=25">
+    <link rel="stylesheet" href="../pieces.css?v=25">
+    <script src="../style-settings.js?v=25"></script>
     <link rel="manifest" href="../manifest.webmanifest">
     <meta name="theme-color" content="#111317">
     <link rel="icon" type="image/png" href="../icons/icon-192.png">
     <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
-    <script src="../app.js?v=24" defer></script>
-    <link rel="stylesheet" href="game.css?v=24">
-    <script src="analysis.js?v=24" defer></script>
-    <script src="strength.js?v=24" defer></script>
-    <script src="history-store.js?v=24" defer></script>
-    <script src="ratings.js?v=24" defer></script>
-    <script src="trainer-page.js?v=24" defer></script>
+    <script src="../app.js?v=25" defer></script>
+    <link rel="stylesheet" href="game.css?v=25">
+    <script src="engine.js?v=25" defer></script>
+    <script src="notation.js?v=25" defer></script>
+    <script src="analysis.js?v=25" defer></script>
+    <script src="strength.js?v=25" defer></script>
+    <script src="sound.js?v=25" defer></script>
+    <script src="board-ui.js?v=25" defer></script>
+    <script src="history-store.js?v=25" defer></script>
+    <script src="ratings.js?v=25" defer></script>
+    <script src="trainer-page.js?v=25" defer></script>
 </head>
 <body>
 
@@ -38,15 +42,47 @@
     </header>
 
     <main class="trainer-page">
-        <section class="trainer-hero">
-            <div>
-                <div class="eyebrow">Your training plan</div>
-                <h1 id="planTitle">Let's find what to work on</h1>
+        <!-- ── HERO: where you stand, one button to start ─────────────────── -->
+        <section class="panel train-hero" id="trainHero">
+            <div class="train-hero-main">
+                <div class="eyebrow">Your training</div>
+                <h1 id="planTitle">Fix your own mistakes</h1>
                 <p class="muted" id="planSub"></p>
+                <button class="btn btn-primary btn-lg" id="startTraining">▶ Train now</button>
             </div>
-            <div class="trainer-ratings" id="ratingTiles"></div>
+            <div class="train-stats">
+                <div class="train-stat"><strong id="statToFix">0</strong><span>To fix</span></div>
+                <div class="train-stat"><strong id="statDue">0</strong><span>Reviews due</span></div>
+                <div class="train-stat"><strong id="statMastered">0</strong><span>Mastered</span></div>
+                <div class="train-stat streak"><strong id="statStreak">0</strong><span>Day streak 🔥</span></div>
+            </div>
         </section>
 
+        <!-- ── TRAINING SESSION (inline board) ────────────────────────────── -->
+        <section class="panel train-session hidden" id="trainSession">
+            <div class="session-head">
+                <div>
+                    <div class="eyebrow" id="sessionTitle">Training</div>
+                    <div class="session-count" id="sessionCount">1 / 1</div>
+                </div>
+                <div class="session-streak" id="sessionStreak"></div>
+                <button class="btn btn-ghost btn-icon" id="endSession" title="End training" aria-label="End training">✕</button>
+            </div>
+            <div class="session-progress"><div class="session-progress-fill" id="sessionFill"></div></div>
+            <div class="session-body">
+                <div class="session-board-wrap">
+                    <div id="trainBoard"></div>
+                </div>
+                <div class="session-side">
+                    <div class="session-task" id="sessionTask"></div>
+                    <div class="session-clue" id="sessionClue"></div>
+                    <div class="session-feedback hidden" id="sessionFeedback"></div>
+                    <div class="session-actions" id="sessionActions"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── FOCUS AREAS ─────────────────────────────────────────────────── -->
         <section class="trainer-section">
             <h2>Focus areas</h2>
             <div class="focus-grid" id="focusList"></div>
@@ -54,7 +90,13 @@
 
         <section class="trainer-columns">
             <div class="panel">
-                <div class="panel-header">Practise your own mistakes <span class="muted" id="practiceCount"></span></div>
+                <div class="panel-header">Your positions
+                    <div class="segmented position-filter" id="positionFilter">
+                        <button data-filter="open" class="selected">To fix</button>
+                        <button data-filter="fixed">Fixed</button>
+                        <button data-filter="mastered">Mastered</button>
+                    </div>
+                </div>
                 <div class="practice-list" id="practiceList"></div>
             </div>
             <div class="trainer-side">

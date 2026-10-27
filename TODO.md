@@ -1095,6 +1095,30 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 🎯 Session 31 — Train tab remade: best move only, progress that sticks, inline training
+
+- **User feedback:** fixing a mistake with any good move "confirmed" it, and the position stayed on the
+  Train tab anyway. Now every mistake from your reviews is a **training position** solved inline on
+  the Train page (`trainer-page.js`, BoardView + its own analysis worker): **best move only** — the stored
+  best move, or a move `judgeMove` rates Best/Great/Brilliant ("Excellent" = "close, but there's a better
+  move").
+- **Progress** (`chessTraining` = { items: { "gameId:ply": { box, due, tries, solves } }, days }), Leitner
+  boxes: first-try fix → next box, review after 1 / 3 / 7 / 21 days, box 5 = mastered; fix after misses or a
+  hint → box 1 (back tomorrow); "Show solution" → stays to fix. Statuses: To fix · Review (due) · Fixed ✓
+  (next in Nd) · ★ Mastered. A day streak counts training days.
+- **Page:** hero with To fix / Reviews due / Mastered / 🔥 streak and one "▶ Train now" (≤ 10 positions,
+  due reviews first); session panel with progress bar, in-a-row streak, clue that doesn't name the move,
+  Hint (highlights the piece), Show solution, Skip; green pulse + chime when right, red shake + vibration
+  when wrong (board resets after 0.9 s), summary at the end; focus cards show "N of M fixed" and
+  "▶ Train these" (that motif only); "Your positions" list with To fix / Fixed / Mastered filters, a
+  status chip and Train / Again per position; the Training tile shows your solve rate.
+- Reviews now store each mistake's `best` SAN and first 6 plies of `line`; older reviews get the best
+  move from the engine (`hint`) when the position comes up; reviews from before Session 28 (totals only)
+  are flagged "open it in Review once more".
+- Cache version `?v=25`.
+
+---
+
 ## 📱 Session 30 — Phone fixes, looking back during games, QR data transfer
 
 - **Phone layout (user report: small board, cut-off buttons, blue flicker):** the top bar was 405 px wide

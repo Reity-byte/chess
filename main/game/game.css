@@ -781,6 +781,65 @@ body.app-shell { overflow: hidden; }
 .moment-eval { font: 700 12px var(--mono); color: var(--text-faint); white-space: nowrap; }
 .caption-line .reason { color: var(--text); font-weight: 600; }
 
+/* ─── TRAINER: HERO, SESSION, STATUS ─────────────────────────────────────────── */
+.train-hero { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 22px; padding: 24px; }
+.train-hero-main { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; flex: 1 1 320px; }
+.train-hero-main h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+.train-hero-main p { max-width: 520px; }
+.train-hero-main .btn-lg { margin-top: 10px; }
+.train-stats { display: grid; grid-template-columns: repeat(4, minmax(78px, 1fr)); gap: 8px; flex: 0 1 440px; }
+.train-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 6px; border-radius: 12px; background: var(--surface-2); text-align: center; font-size: 12px; color: var(--text-dim); }
+.train-stat strong { font: 800 26px var(--mono); color: var(--text); }
+.train-stat.streak strong { color: var(--warning); }
+
+.train-session { --board-size: min(480px, calc(100vw - 80px)); padding: 16px 18px 18px; }
+.session-head { display: flex; align-items: center; gap: 12px; }
+.session-count { font: 800 20px var(--mono); }
+.session-streak { margin-left: auto; font: 800 14px var(--font); color: var(--warning); }
+.session-progress { height: 6px; margin: 12px 0 16px; border-radius: 6px; background: var(--surface-3); overflow: hidden; }
+.session-progress-fill { height: 100%; width: 0; background: var(--accent); border-radius: 6px; transition: width 300ms ease; }
+.session-body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: start; }
+.session-side { display: flex; flex-direction: column; gap: 12px; }
+.session-task { font-size: 17px; }
+.session-clue { display: flex; gap: 9px; align-items: flex-start; font-size: 14px; color: var(--text-dim); }
+.session-clue .mv-icon { margin-top: 2px; }
+.session-feedback { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--surface-2); animation: paneIn 180ms ease-out; }
+.session-feedback.good { background: var(--accent-soft); }
+.session-feedback.bad { background: var(--danger-soft); }
+.session-feedback .caption-icon { width: 32px; height: 32px; font-size: 14px; }
+.session-feedback.good .caption-icon { background: var(--accent); color: var(--accent-ink); }
+.session-feedback.bad .caption-icon { background: var(--danger); }
+.session-feedback-title { font-weight: 800; font-size: 15px; }
+.session-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.session-actions .btn { height: 40px; }
+.session-actions .btn-primary { margin-left: auto; }
+#trainBoard.flash-good { animation: flashGood 650ms ease-out; }
+#trainBoard.flash-bad { animation: flashBad 500ms ease-out; }
+@keyframes flashGood { 0% { box-shadow: 0 0 0 0 rgba(140, 200, 94, 0.9); } 100% { box-shadow: 0 0 0 18px rgba(140, 200, 94, 0); } }
+@keyframes flashBad {
+    0%, 100% { transform: none; box-shadow: 0 0 0 0 rgba(239, 94, 85, 0.85); }
+    20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(2px); box-shadow: 0 0 0 14px rgba(239, 94, 85, 0); }
+}
+.status-chip { flex-shrink: 0; padding: 3px 9px; border-radius: 999px; font: 700 11px var(--font); white-space: nowrap; }
+.status-chip.new { background: var(--danger-soft); color: var(--danger); }
+.status-chip.due { background: var(--warning-soft); color: var(--warning); }
+.status-chip.fixed { background: var(--accent-soft); color: var(--accent); }
+.status-chip.mastered { background: rgba(98, 168, 255, 0.15); color: var(--info); }
+.focus-progress { font-size: 12px; font-weight: 700; color: var(--accent); }
+.position-filter { margin-left: auto; padding: 3px; }
+.position-filter button { height: 28px; font-size: 12px; }
+.practice-note { padding: 10px 12px; font-size: 12px; color: var(--text-faint); }
+@media (max-width: 760px) {
+    .session-body { grid-template-columns: 1fr; justify-items: center; }
+    .session-side { width: 100%; }
+    .train-session { --board-size: calc(100vw - 16px - 24px); padding: 12px; }
+    .train-hero { padding: 18px; }
+    .train-stats { grid-template-columns: repeat(4, 1fr); flex: 1 1 100%; }
+    .train-stat { padding: 10px 4px; }
+    .train-stat strong { font-size: 20px; }
+    .panel-header:has(.position-filter) { flex-wrap: wrap; }
+}
+
 /* ─── TRAINER PAGE ───────────────────────────────────────────────────────────── */
 .trainer-page { display: flex; flex-direction: column; gap: 22px; max-width: 1080px; margin: 0 auto; padding: 24px 20px 40px; }
 .trainer-hero { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 18px; }
