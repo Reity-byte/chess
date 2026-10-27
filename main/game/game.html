@@ -4,28 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Play · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=22">
-    <link rel="stylesheet" href="../pieces.css?v=22">
-    <script src="../style-settings.js?v=22"></script>
+    <link rel="stylesheet" href="../theme.css?v=24">
+    <link rel="stylesheet" href="../pieces.css?v=24">
+    <script src="../style-settings.js?v=24"></script>
     <link rel="manifest" href="../manifest.webmanifest">
     <meta name="theme-color" content="#111317">
     <link rel="icon" type="image/png" href="../icons/icon-192.png">
     <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
-    <script src="../app.js?v=22" defer></script>
-    <link rel="stylesheet" href="game.css?v=22">
-    <script src="engine.js?v=22" defer></script>
-    <script src="ai.js?v=22" defer></script>
-    <script src="notation.js?v=22" defer></script>
-    <script src="openings.js?v=22" defer></script>
-    <script src="strength.js?v=22" defer></script>
-    <script src="sound.js?v=22" defer></script>
-    <script src="board-ui.js?v=22" defer></script>
-    <script src="analysis.js?v=22" defer></script>
-    <script src="history-store.js?v=22" defer></script>
-    <script src="ratings.js?v=22" defer></script>
-    <script src="review-runner.js?v=22" defer></script>
-    <script src="coach.js?v=22" defer></script>
-    <script src="game-script.js?v=22" defer></script>
+    <script src="../app.js?v=24" defer></script>
+    <link rel="stylesheet" href="game.css?v=24">
+    <script src="engine.js?v=24" defer></script>
+    <script src="ai.js?v=24" defer></script>
+    <script src="notation.js?v=24" defer></script>
+    <script src="openings.js?v=24" defer></script>
+    <script src="strength.js?v=24" defer></script>
+    <script src="sound.js?v=24" defer></script>
+    <script src="board-ui.js?v=24" defer></script>
+    <script src="analysis.js?v=24" defer></script>
+    <script src="history-store.js?v=24" defer></script>
+    <script src="ratings.js?v=24" defer></script>
+    <script src="review-runner.js?v=24" defer></script>
+    <script src="coach.js?v=24" defer></script>
+    <script src="game-script.js?v=24" defer></script>
 </head>
 <body>
 
@@ -66,6 +66,15 @@
                     <div class="captured" id="bottomCaptured"></div>
                 </div>
                 <div class="clock" id="bottomClock"></div>
+            </div>
+
+            <!-- Looking back at earlier positions during the game (read-only). -->
+            <div class="play-nav" id="playNav">
+                <button class="btn" id="viewStart" title="First position" aria-label="First position">⏮</button>
+                <button class="btn" id="viewPrev" title="Previous position (←)" aria-label="Previous position">◀</button>
+                <span class="view-label" id="viewLabel">Live</span>
+                <button class="btn" id="viewNext" title="Next position (→)" aria-label="Next position">▶</button>
+                <button class="btn" id="viewLive" title="Back to the live position" aria-label="Back to the live position">⏭</button>
             </div>
         </section>
 

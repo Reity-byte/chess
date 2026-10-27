@@ -107,17 +107,50 @@ h1, h2, h3, h4, p { margin: 0; }
 .topnav a.active { color: var(--text); background: var(--surface-2); box-shadow: inset 0 -2px 0 var(--accent); }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 
-@media (max-width: 640px) {
-    .topbar { padding: 0 14px; gap: 10px; }
-    .topnav a { padding: 7px 8px; }
-    .brand-name { display: none; }
-}
 .install-button { padding: 0 12px; gap: 6px; color: var(--accent); font-size: 14px; }
-@media (max-width: 480px) {
-    .style-button-label, .install-label { display: none; }
-    .topnav { gap: 0; }
-    .topnav a { padding: 7px 6px; font-size: 13px; }
+
+/* ─── PHONE: BOTTOM TAB BAR ──────────────────────────────────────────────────────
+   On narrow screens the page links move from the top bar to an app-style tab
+   bar at the bottom (built from .topnav by style-settings.js), so the top bar
+   only holds the logo, Style and Install and never runs off the screen. */
+.tabbar { display: none; }
+@media (max-width: 640px) {
+    :root { --tabbar-h: 60px; }
+    .topbar { height: 52px; padding: 0 12px; gap: 10px; }
+    .topnav { display: none; }
+    .style-button-label { display: none; }
+    body { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px)); }
+    .tabbar {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        z-index: 60;
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 1fr;
+        height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        background: rgba(17, 19, 23, 0.94);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid var(--border);
+    }
+    .tabbar a {
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+        color: var(--text-faint);
+        font: 700 11px var(--font);
+    }
+    .tabbar a.active { color: var(--accent); }
+    .tab-icon { width: 24px; height: 24px; background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+    .tabbar a.active .tab-icon { transform: translateY(-1px); }
 }
+@media (max-width: 380px) { .install-label { display: none; } }
+.tab-icon[data-tab="play"]    { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M8 21h10v-2H8zM9.5 18h7c-.3-2.6-.2-4.7 1.1-6.9.7-1.2.9-2.6.4-3.9C17.2 4.9 15 3.4 12.3 3.3L11 2l-.8 2.3C8.3 5.6 6.6 7.5 6 9.6l-.5 1.9 1.8.9 2-1.2 1.6.3c-1 2.3-1.8 4.4-1.4 6.5z'/%3E%3C/svg%3E"); }
+.tab-icon[data-tab="review"]  { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 4h18v2H3zm0 5h11v2H3zm0 5h8v2H3zm14.5-2a3.5 3.5 0 0 1 2.9 5.5l2.3 2.3-1.4 1.4-2.3-2.3A3.5 3.5 0 1 1 17.5 12zm0 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z'/%3E%3C/svg%3E"); }
+.tab-icon[data-tab="puzzles"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 3a2.5 2.5 0 0 1 2.5 2.5V6H17a1 1 0 0 1 1 1v4.5h.5a2.5 2.5 0 0 1 0 5H18V21a1 1 0 0 1-1 1h-4.5v-1a2 2 0 0 0-4 0v1H4a1 1 0 0 1-1-1v-4.5h1a2 2 0 0 0 0-4H3V7a1 1 0 0 1 1-1h3.5v-.5A2.5 2.5 0 0 1 10 3z'/%3E%3C/svg%3E"); }
+.tab-icon[data-tab="history"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a10 10 0 1 1-9.4 13.4l1.9-.7A8 8 0 1 0 6.3 6.3L9 9H2V2l2.9 2.9A10 10 0 0 1 12 2zm-1 5h2v4.6l3.4 2-1 1.7L11 12.7z'/%3E%3C/svg%3E"); }
+.tab-icon[data-tab="train"]   { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm0 3a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2z'/%3E%3C/svg%3E"); }
+
+/* No blue flash over tapped elements on Android (the board flickered on every move). */
+* { -webkit-tap-highlight-color: transparent; }
 
 /* ─── BUTTONS ────────────────────────────────────────────────────────────────── */
 .btn {
@@ -240,6 +273,12 @@ h1, h2, h3, h4, p { margin: 0; }
 .modal-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
 .modal-actions .btn { flex: 1 1 auto; }
 .field-label { margin: 18px 0 8px; }
+@media (max-width: 480px) {
+    .modal-overlay { padding: 10px; }
+    .modal { padding: 20px 16px; border-radius: 16px; max-height: calc(100vh - 20px); }
+    .modal h2 { font-size: 20px; }
+    .field-label { margin: 14px 0 6px; }
+}
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes popUp {
@@ -375,6 +414,28 @@ h1, h2, h3, h4, p { margin: 0; }
 .switch:checked { background: var(--accent); }
 .switch:checked::after { transform: translateX(18px); background: var(--accent-ink); }
 .style-credits { margin-top: 14px; font-size: 12px; line-height: 1.45; }
+.data-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.data-actions .btn { height: 40px; font-size: 13px; }
+.data-actions .btn:first-child { grid-column: 1 / -1; }
+
+/* ─── MOVE YOUR DATA (transfer.js) ───────────────────────────────────────────── */
+.transfer-modal { width: min(460px, 100%); }
+.transfer-tabs { margin-top: 16px; }
+.transfer-body { margin-top: 16px; }
+.transfer-send, .transfer-receive { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.qr-canvas { display: block; border-radius: 10px; image-rendering: pixelated; box-shadow: 0 0 0 6px #fff; }
+.camera-box { position: relative; width: min(320px, 100%); aspect-ratio: 1; border-radius: 14px; overflow: hidden; background: #000; }
+.camera-box video { width: 100%; height: 100%; object-fit: cover; }
+.camera-frame { position: absolute; inset: 12%; border: 3px solid rgba(140, 200, 94, 0.9); border-radius: 12px; box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35); }
+.transfer-progress { width: 100%; display: flex; flex-direction: column; gap: 6px; text-align: center; font: 700 13px var(--mono); color: var(--text-dim); }
+.transfer-progress .progress-track { height: 6px; border-radius: 6px; background: var(--surface-3); overflow: hidden; }
+.transfer-progress .progress-fill { height: 100%; width: 0; background: var(--accent); border-radius: 6px; transition: width 200ms ease; }
+.transfer-help { font-size: 13px; color: var(--text-dim); text-align: center; line-height: 1.5; }
+.transfer-result { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.transfer-ok { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font: 800 22px var(--font); }
+.transfer-result .modal-actions { flex-direction: column; }
+.transfer-note { font-size: 12px; line-height: 1.45; }
+.backup-input { max-width: 100%; color: var(--text-dim); }
 
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }

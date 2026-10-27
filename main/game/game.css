@@ -26,6 +26,14 @@
     .eval-bar { width: 20px; }
     .board-row { gap: 8px; }
 }
+/* Phones: the board takes nearly the full width. */
+@media (max-width: 480px) {
+    :root { --board-size: calc(100vw - 16px); }
+    .play-page { padding: 8px 8px 20px; gap: 14px; }
+    .has-evalbar { --board-size: calc(100vw - 16px - 26px); }
+    .eval-bar { width: 18px; }
+    .player-strip { padding: 0 2px; }
+}
 
 /* ─── BOARD ──────────────────────────────────────────────────────────────────── */
 .board {
@@ -258,6 +266,14 @@
 
 .action-grid { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; padding: 12px; }
 @media (max-width: 420px) { .action-grid { grid-auto-flow: row; grid-template-columns: repeat(2, 1fr); } }
+
+/* Looking back during a game (game page): ⏮ ◀ label ▶ ⏭ under the board. */
+.play-nav { display: grid; grid-template-columns: auto auto 1fr auto auto; align-items: center; gap: 6px; }
+.play-nav .btn { height: 36px; width: 46px; padding: 0; }
+.view-label { text-align: center; font: 700 13px var(--mono); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.view-label.viewing { color: var(--warning); }
+.board.viewing { box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5), 0 0 0 3px var(--warning); }
+#movesGrid .mv.clickable { cursor: pointer; }
 
 /* Coach card (game page): hints and Coach-mode grades for your moves. */
 .coach-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; animation: paneIn 200ms ease-out; }
@@ -519,8 +535,12 @@ body.app-shell { overflow: hidden; }
     .review-side { width: 100%; max-width: 720px; overflow: visible; }
     .tab-pane, .tab-pane[data-pane="moves"] { overflow: visible; }
     .review-side .moves-scroll { max-height: 55vh; }
-    .side-nav { position: sticky; bottom: 0; z-index: 20; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+    .side-nav { position: sticky; bottom: var(--tabbar-h, 0px); z-index: 20; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
     .graph-strip { padding-left: 28px; }
+}
+@media (max-width: 480px) {
+    .review-page { --board-size: calc(100vw - 16px - 26px); padding: 8px 8px 0; gap: 14px; }
+    .graph-strip { padding-left: 26px; }
 }
 
 /* ─── REVIEW PAGE ────────────────────────────────────────────────────────────── */

@@ -106,7 +106,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=22');
+            this.worker = new Worker('ai-worker.js?v=24');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -166,7 +166,7 @@ const engineClient = {
 document.addEventListener('DOMContentLoaded', () => {
 
     board = new BoardView(document.getElementById('chessboard'), {
-        canSelect: (x, y) => isHumanTurn() && !aiThinking && !!gameState[y][x] && gameState[y][x].color === currentTurn,
+        canSelect: (x, y) => viewPly === null && isHumanTurn() && !aiThinking && !!gameState[y][x] && gameState[y][x].color === currentTurn,
         legalMoves: (x, y) => getvalidMoves(x, y),
         onMove: onHumanMove,
     });
@@ -203,6 +203,15 @@ document.addEventListener('DOMContentLoaded', () => {
     $('closeModalButton').addEventListener('click', () => $('gameOverModal').classList.add('hidden'));
     $('gameOverModal').addEventListener('click', (e) => { if (e.target === $('gameOverModal')) $('gameOverModal').classList.add('hidden'); });
     $('reportButton').addEventListener('click', openReview);
+    $('viewStart').addEventListener('click', () => viewPosition(0));
+    $('viewPrev').addEventListener('click', () => stepView(-1));
+    $('viewNext').addEventListener('click', () => stepView(1));
+    $('viewLive').addEventListener('click', () => viewPosition(null));
+    document.addEventListener('keydown', (e) => {
+        if ((e.target.closest && e.target.closest('input, textarea')) || document.querySelector('.modal-overlay:not(.hidden)')) return;
+        const keys = { ArrowLeft: () => stepView(-1), ArrowRight: () => stepView(1), Home: () => viewPosition(0), End: () => viewPosition(null) };
+        if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
+    });
     $('flipButton').addEventListener('click', () => { isFlipped = !isFlipped; board.setFlipped(isFlipped); updatePlayers(); });
     $('pgnButton').addEventListener('click', downloadPGN);
     $('pgnButtonModal').addEventListener('click', downloadPGN);
@@ -383,7 +392,8 @@ function startGame(resumeData) {
     isFlipped = playerColor === 'black';
 
     const resumeSAN = resumeData ? rowsToSAN(resumeData.moveHistory) : [];
-    const applied = replaySANFromStart(resumeSAN);
+    const applied = replayWithSnapshots(resumeSAN);
+    viewPly = null;
     moveHistory = rowsFromSAN(resumeSAN.slice(0, applied));
 
     gameActive = true;
@@ -430,6 +440,8 @@ function commitMove(move, promo) {
 
     playSoundForMove(san);
     if (clockState) clockState[color] += clockState.incrementMs;
+    snapshots.push(takeSnapshot());
+    viewPly = null;
 
     board.render(gameState);
     syncBoardMarks();
@@ -660,13 +672,106 @@ function renderMoves() {
             const cell = document.createElement('div');
             cell.className = 'mv';
             cell.textContent = san || (j === 0 && !row.white ? '…' : '');
-            if (san && i * 2 + j === total - 1) cell.classList.add('latest', 'active');
+            const ply = i * 2 + j + 1; // snapshot index after this move
+            if (san) {
+                cell.classList.add('clickable');
+                cell.addEventListener('click', () => viewPosition(ply));
+                if (ply === total) cell.classList.add('latest');
+                if (ply === (viewPly === null ? total : viewPly)) cell.classList.add('active');
+            }
             grid.appendChild(cell);
         });
     });
     document.getElementById('movesEmpty').classList.toggle('hidden', total > 0);
     const scroller = document.getElementById('movesScroll');
-    scroller.scrollTop = scroller.scrollHeight;
+    if (viewPly === null) scroller.scrollTop = scroller.scrollHeight;
+    syncViewControls();
+}
+
+// ─── LOOKING BACK DURING A GAME ─────────────────────────────────────────────────
+// Every position of the game is kept as a small snapshot (pieces, last move,
+// check), so you can step back through the game while playing — tap a move in
+// the list or use ⏮ ◀ ▶ ⏭ under the board. Looking back is read-only and
+// never touches the live game; the clock keeps running, and the next move
+// played brings the board back to the live position.
+let snapshots = [];   // index = plies played: [{ board, from, to, check }]
+let viewPly = null;   // null = the live position, else the snapshot shown
+
+function takeSnapshot() {
+    const kp = findKing(currentTurn);
+    return {
+        board: gameState.map(row => row.map(p => p && { color: p.color, type: p.type })),
+        from: lastMove ? { x: lastMove.fromX, y: lastMove.fromY } : null,
+        to: lastMove ? { x: lastMove.toX, y: lastMove.toY } : null,
+        check: kp && isInCheck(currentTurn) ? { x: kp.x, y: kp.y } : null,
+    };
+}
+
+// replaySANFromStart that also keeps a snapshot of every position.
+function replayWithSnapshots(sans) {
+    resetGame();
+    recordPosition();
+    snapshots = [takeSnapshot()];
+    let applied = 0;
+    for (const san of sans) {
+        const r = resolveSAN(currentTurn, san);
+        if (!r) break;
+        applyMoveWithPromotion(r.move, r.promo);
+        recordPosition();
+        snapshots.push(takeSnapshot());
+        applied++;
+    }
+    return applied;
+}
+
+// Shows position `ply` (0 = the start); null or the last position = live.
+function viewPosition(ply) {
+    const last = snapshots.length - 1;
+    if (ply === null || ply >= last) {
+        if (viewPly === null) return;
+        viewPly = null;
+        board.render(gameState);
+        syncBoardMarks();
+        updatePlayers();
+        renderMoves();
+        return;
+    }
+    if (viewPly === null) clearHint();
+    viewPly = Math.max(0, ply);
+    const snap = snapshots[viewPly];
+    board.clearSelection();
+    board.render(snap.board);
+    board.setLastMove(snap.from, snap.to);
+    board.setCheck(snap.check);
+    board.setBadge(null);
+    const topColor = isFlipped ? 'white' : 'black';
+    renderCaptured(document.getElementById('topCaptured'), topColor, snap.board);
+    renderCaptured(document.getElementById('bottomCaptured'), other(topColor), snap.board);
+    renderMoves();
+}
+
+function stepView(delta) {
+    const last = snapshots.length - 1;
+    const from = viewPly === null ? last : viewPly;
+    const to = Math.max(0, Math.min(last, from + delta));
+    if (to === from) return;
+    viewPosition(to);
+    if (delta > 0) { const sans = sanList(); if (sans[to - 1]) playSoundForMove(sans[to - 1]); }
+}
+
+function syncViewControls() {
+    const last = snapshots.length - 1;
+    const viewing = viewPly !== null;
+    const label = document.getElementById('viewLabel');
+    if (!label) return;
+    const ply = viewing ? viewPly : last;
+    label.textContent = !viewing ? 'Live' : ply === 0 ? 'Viewing the start' : `Viewing ${Math.ceil(ply / 2)}${ply % 2 ? '.' : '…'} ${sanList()[ply - 1]}`;
+    label.classList.toggle('viewing', viewing);
+    document.getElementById('chessboard').classList.toggle('viewing', viewing);
+    document.getElementById('viewStart').disabled = ply <= 0;
+    document.getElementById('viewPrev').disabled = ply <= 0;
+    document.getElementById('viewNext').disabled = !viewing;
+    document.getElementById('viewLive').disabled = !viewing;
 }
 
 // ─── CLOCK ─────────────────────────────────────────────────────────────────────
@@ -813,7 +918,8 @@ function takeback() {
     list.pop(); // pass & play undoes just the last move; vs the engine, back to your turn
     while (gameMode === 'human' && list.length > 0 && (list.length % 2 === 0 ? 'white' : 'black') !== playerColor) list.pop();
 
-    replaySANFromStart(list);
+    replayWithSnapshots(list);
+    viewPly = null;
     moveHistory = rowsFromSAN(list);
     clearHint();
     board.setBadge(null);

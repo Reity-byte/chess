@@ -1095,6 +1095,33 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## 📱 Session 30 — Phone fixes, looking back during games, QR data transfer
+
+- **Phone layout (user report: small board, cut-off buttons, blue flicker):** the top bar was 405 px wide
+  on a 375 px screen, so mobile browsers zoomed the whole page out (tiny board) and pushed buttons off
+  the edge. Now ≤ 640 px: the page links move to an app-style **bottom tab bar** (built from `.topnav`
+  by `style-settings.js`, icons as CSS masks), the top bar keeps only logo / Style / Install; the board
+  is `100vw − 16px` on ≤ 480 px (≈ 359 px on a 375 px phone); the review page's sticky nav sits above
+  the tab bar; tighter modals. Verified no element wider than the screen on all 6 pages at 360/375/412.
+  The blue flash was Android's tap highlight → `* { -webkit-tap-highlight-color: transparent }`.
+- **Looking back during a game** (game page): every position is kept as a snapshot (`snapshots`,
+  `takeSnapshot`, `replayWithSnapshots` replaces `replaySANFromStart` at start/resume/takeback); tap a
+  move in the list or ⏮ ◀ ▶ ⏭ under the board (and ← → Home End) to view it read-only — amber board
+  outline, label "Viewing 3… a6", captured pieces of that position; the clock keeps running and the next
+  move played returns to live.
+- **Move your data** (Style panel → Your data; `main/transfer.js`, loaded on demand): QR send/receive of
+  every `chess*` key except caches/temporary ones — deflate-raw compressed (CompressionStream), cut
+  into frames with a 9-byte header ("CQ", flags, session, index, count) shown as a looping QR series
+  (`vendor/qrcode.js`, 200 ms per code; 360-byte payloads, 640 for > 16 KB); the receiver films it with
+  the back camera (`vendor/jsQR.js`, centred 720 px square, ~11 scans/s), collects frames in any order,
+  then asks **Merge** (games union by id, per-mode rating with more games, puzzles union, puzzle rating
+  of the device with more solved, device prefs stay) or **Replace**. Plus **Save / Load backup file**
+  (same JSON). Measured: 300 realistic games = 44 KB packed = 72 codes ≈ 15 s per loop, every code
+  decoded back identical. Libraries bundled with licenses in `main/vendor/` (CREDITS.md).
+- Cache version `?v=24`.
+
+---
+
 ## 📲 Session 29 — Installable offline app + Pass & play
 
 - **Installable app (PWA):** `main/manifest.webmanifest` (standalone, dark theme, Play/Review/Train
@@ -1271,6 +1298,7 @@ I have a vanilla JS chess site:
   main/game/coach.js      (game page: 💡 hints and Coach mode grading)
   main/app.js, sw.js, manifest.webmanifest, icons/   (installable offline app; precache.js is generated)
   tools/release.js        (npm run release: bump ?v= and regenerate the offline file list)
+  main/transfer.js, vendor/   (move data between devices: animated QR codes, backup file)
   main/game/trainer.html, trainer-page.js   (Trainer: focus areas, practice list, next game)
   main/game/ai-worker.js  (live-game engine worker)
   main/game/notation.js   (SAN generation + resolveSAN/replaySANFromStart)

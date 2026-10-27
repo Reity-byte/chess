@@ -8,6 +8,7 @@
 // key on: data-pieces (pieces.css), data-board (theme.css), and data-coords /
 // data-anim / data-hints = "off" (game.css).
 const STYLE_KEY = 'chessStyle';
+const STYLE_BASE = new URL('.', document.currentScript.src); // the main/ folder
 const SOUND_MUTED_KEY = 'chessSoundMuted'; // shared with sound.js
 
 const PIECE_SETS = [
@@ -92,7 +93,27 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.innerHTML = '<span class="style-button-icon" aria-hidden="true"><span class="piece-icon white knight"></span></span><span class="style-button-label">Style</span>';
     btn.addEventListener('click', openStylePanel);
     right.prepend(btn);
+    buildTabBar(bar);
 });
+
+// Phone tab bar (shown by theme.css on narrow screens): the page's own top-bar
+// links, each with an icon.
+function buildTabBar(bar) {
+    const nav = bar.querySelector('.topnav');
+    if (!nav || document.querySelector('.tabbar')) return;
+    const tabs = document.createElement('nav');
+    tabs.className = 'tabbar';
+    tabs.setAttribute('aria-label', 'Pages');
+    const icon = (href) => /trainer/.test(href) ? 'train' : /history/.test(href) ? 'history' : /puzzles/.test(href) ? 'puzzles' : /analysis/.test(href) ? 'review' : 'play';
+    for (const link of nav.querySelectorAll('a')) {
+        const a = document.createElement('a');
+        a.href = link.getAttribute('href');
+        if (link.classList.contains('active')) { a.className = 'active'; a.setAttribute('aria-current', 'page'); }
+        a.innerHTML = `<span class="tab-icon" data-tab="${icon(a.href)}" aria-hidden="true"></span><span>${link.textContent}</span>`;
+        tabs.appendChild(a);
+    }
+    document.body.appendChild(tabs);
+}
 
 function openStylePanel() {
     const style = loadStyle();
@@ -109,6 +130,12 @@ function openStylePanel() {
             <div class="style-grid board-grid"></div>
             <div class="eyebrow field-label">Options</div>
             <div class="style-options"></div>
+            <div class="eyebrow field-label">Your data</div>
+            <div class="data-actions">
+                <button type="button" class="btn" data-transfer="send">📲 Move to another device</button>
+                <button type="button" class="btn" data-transfer="save">⤓ Save backup file</button>
+                <button type="button" class="btn" data-transfer="load">⤒ Load backup file</button>
+            </div>
             <p class="style-credits faint">Piece sets other than Pixel are from lichess.org by their authors
                 (GPL, MIT and CC BY-NC-SA licenses) — see game/pieces/CREDITS.md.</p>
             <div class="modal-actions"><button type="button" class="btn btn-primary" data-close>Done</button></div>
@@ -183,9 +210,20 @@ function openStylePanel() {
     update();
 
     const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+    modal.querySelectorAll('[data-transfer]').forEach(b => b.addEventListener('click', () => { close(); openTransfer(b.dataset.transfer); }));
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-close]')) close(); });
     document.addEventListener('keydown', onKey);
     document.body.appendChild(overlay);
     modal.querySelector('.style-choice.active').focus();
+}
+
+// Moving data between devices (QR / backup file) lives in transfer.js, loaded
+// the first time it's needed.
+function openTransfer(action) {
+    if (typeof openTransferPanel === 'function') { openTransferPanel(action); return; }
+    const script = document.createElement('script');
+    script.src = new URL('transfer.js?v=24', STYLE_BASE).href;
+    script.onload = () => openTransferPanel(action);
+    document.head.appendChild(script);
 }
