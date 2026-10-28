@@ -81,6 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const lineParam = new URLSearchParams(location.search).get('line');
     const target = allLines().find(x => x.line.id === lineParam);
     if (target) startDrill([{ ...target, mode: lineStatus(target.line) === 'new' ? 'learn' : 'quiz' }]);
+    else if (new URLSearchParams(location.search).get('start')) $('reviewAll').click(); // from Today's plan
 });
 
 function renderAll() {

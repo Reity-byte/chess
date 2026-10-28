@@ -8,7 +8,7 @@
 //
 // Stars: 1 = solved, 2 = without hints or take-backs, 3 = that and (where a par
 // is known) within par + a little slack.
-// Progress: localStorage['chessEndgames'] = { lessons: { [id]: { stars, best, tries } } }
+// Progress: localStorage['chessEndgames'] = { lessons: { [id]: { stars, best, tries, lastSolved } } }
 const ENDGAMES_KEY = 'chessEndgames';
 const TRAINING_DAYS_KEY = 'chessTraining';
 const ENGINE_TIME_MS = 700;    // the opponent's thinking time per move
@@ -63,7 +63,7 @@ const engine = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=38');
+            this.worker = new Worker('ai-worker.js?v=39');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {
@@ -360,6 +360,8 @@ function succeed(message) {
     const stars = les.help ? 1 : lesson.par && moves > lesson.par + slack ? 2 : 3;
     const rec = store.lessons[lesson.id] || { stars: 0, tries: 1 };
     rec.stars = Math.max(rec.stars || 0, stars);
+    const d = new Date();
+    rec.lastSolved = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; // for Today's plan
     if (lesson.goal === 'mate' && !les.help && (!rec.best || moves < rec.best)) rec.best = moves;
     store.lessons[lesson.id] = rec;
     saveStore();

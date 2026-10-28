@@ -117,6 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStats();
     renderDaily();
     if (params.get('mode') === 'rush' || params.get('mode') === 'stats') setMode(params.get('mode'));
+    else if (params.get('daily') && dailyPuzzle()) playDaily(); // from Today's plan
     else nextPuzzle();
 });
 

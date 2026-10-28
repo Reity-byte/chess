@@ -53,4 +53,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const resumeBtn = document.getElementById('resumeGameButton');
     resumeBtn.classList.toggle('hidden', !hasSavedGame);
     resumeBtn.addEventListener('click', () => location.href = 'game/game.html?resume=1');
+
+    // Today's plan (game/daily-plan.js); redrawn when coming back with the back button.
+    const plan = document.getElementById('dailyPlan');
+    renderDailyPlan(plan, 'game/');
+    window.addEventListener('pageshow', (e) => { if (e.persisted) renderDailyPlan(plan, 'game/'); });
 });

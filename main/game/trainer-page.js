@@ -54,6 +54,9 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPositions();
     }));
     render();
+    if (new URLSearchParams(location.search).get('train')) startSession(); // from Today's plan
+    // Coming back from another trainer (back button): the plan's ticks may have changed.
+    window.addEventListener('pageshow', (e) => { if (e.persisted) renderDailyPlan($('dailyPlan')); });
 });
 
 // ─── GAMES ─────────────────────────────────────────────────────────────────────
@@ -143,6 +146,7 @@ function recordResult(item, clean) {
 
 // ─── PAGE ──────────────────────────────────────────────────────────────────────
 function render() {
+    if (typeof renderDailyPlan === 'function') renderDailyPlan($('dailyPlan'));
     const games = myGames();
     const reviewed = games.filter(isReviewed).slice(-RECENT_GAMES);
     renderHero(games);
@@ -388,7 +392,7 @@ const engineWaiting = new Map();
 
 function askEngine(message) {
     if (!engineWorker) {
-        try { engineWorker = new Worker('analysis-worker.js?v=38'); } catch (e) { return Promise.resolve(null); }
+        try { engineWorker = new Worker('analysis-worker.js?v=39'); } catch (e) { return Promise.resolve(null); }
         engineWorker.onmessage = (e) => {
             const d = e.data;
             const done = engineWaiting.get(d.requestId);
@@ -427,6 +431,7 @@ function startSession(opts = {}) {
     if (!queue.length) return;
     $('trainSession').classList.remove('hidden');
     $('trainHero').classList.add('hidden');
+    $('dailyPlan').classList.add('hidden');
     $('sessionTitle').textContent = opts.motif ? `Training · ${MOTIF_INFO[opts.motif].label}` : 'Training';
     if (!session || !session.board) {
         const board = new BoardView($('trainBoard'), {
@@ -445,6 +450,7 @@ function startSession(opts = {}) {
 function endSession() {
     $('trainSession').classList.add('hidden');
     $('trainHero').classList.remove('hidden');
+    $('dailyPlan').classList.remove('hidden');
     if (session) session.status = 'ended';
     render();
 }

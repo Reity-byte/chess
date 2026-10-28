@@ -11,7 +11,7 @@
 // comparing two searches of different depth. The next position's search then
 // supplies the eval graph point after the move and the opponent's best reply
 // (the "punish" move for puzzles). Results stream back move by move.
-importScripts('engine.js?v=38', 'ai.js?v=38', 'notation.js?v=38', 'openings.js?v=38', 'analysis.js?v=38');
+importScripts('engine.js?v=39', 'ai.js?v=39', 'notation.js?v=39', 'openings.js?v=39', 'analysis.js?v=39');
 
 // Single moves judged on the review page (variations, retries) and the live
 // engine panel always search at full strength, whatever level the game was

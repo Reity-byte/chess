@@ -23,7 +23,7 @@ const MAGIC = [0x43, 0x51]; // "CQ"
 function loadVendor(name) {
     return new Promise((resolve, reject) => {
         const s = document.createElement('script');
-        s.src = new URL(`vendor/${name}?v=38`, TRANSFER_BASE).href;
+        s.src = new URL(`vendor/${name}?v=39`, TRANSFER_BASE).href;
         s.onload = resolve;
         s.onerror = () => reject(new Error(`couldn't load ${name}`));
         document.head.appendChild(s);

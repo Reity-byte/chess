@@ -4,16 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chess — play, review, train</title>
-    <link rel="stylesheet" href="theme.css?v=38">
-    <link rel="stylesheet" href="pieces.css?v=38">
-    <script src="style-settings.js?v=38"></script>
+    <link rel="stylesheet" href="theme.css?v=39">
+    <link rel="stylesheet" href="pieces.css?v=39">
+    <script src="style-settings.js?v=39"></script>
     <link rel="manifest" href="manifest.webmanifest">
     <meta name="theme-color" content="#111317">
     <link rel="icon" type="image/png" href="icons/icon-192.png">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-    <script src="app.js?v=38" defer></script>
-    <link rel="stylesheet" href="site.css?v=38">
-    <script src="site-script.js?v=38" defer></script>
+    <script src="app.js?v=39" defer></script>
+    <link rel="stylesheet" href="site.css?v=39">
+    <script src="game/history-store.js?v=39" defer></script>
+    <script src="game/opening-repertoires.js?v=39" defer></script>
+    <script src="game/endgame-lessons.js?v=39" defer></script>
+    <script src="game/daily-plan.js?v=39" defer></script>
+    <script src="site-script.js?v=39" defer></script>
 </head>
 <body>
 
@@ -55,6 +59,11 @@
                 <span><strong>16. Qb8+</strong> — Brilliant. Morphy's Opera Game, 1858</span>
             </figcaption>
         </figure>
+    </section>
+
+    <!-- ── TODAY'S PLAN (game/daily-plan.js) ────────────────────────────── -->
+    <section class="section plan-section">
+        <div class="panel daily-plan" id="dailyPlan"></div>
     </section>
 
     <!-- ── MODES ────────────────────────────────────────────────────────── -->
