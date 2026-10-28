@@ -157,6 +157,19 @@ function render() {
     renderUnreviewed(games);
     renderOpeningsCard();
     renderEndgamesCard();
+    renderAchievementsCard();
+}
+
+function renderAchievementsCard() {
+    if (typeof evaluateAchievements !== 'function') return;
+    const all = evaluateAchievements();
+    const got = all.filter(a => a.unlocked).length;
+    $('achievementsCardSub').textContent = got ? `${got} of ${all.length} unlocked` : `${all.length} badges to earn`;
+}
+
+// achievements.js calls this when something new unlocks.
+function onAchievementsChanged() {
+    renderAchievementsCard();
 }
 
 // The Opening Trainer's progress (openings.html, chessOpenings).
@@ -392,7 +405,7 @@ const engineWaiting = new Map();
 
 function askEngine(message) {
     if (!engineWorker) {
-        try { engineWorker = new Worker('analysis-worker.js?v=39'); } catch (e) { return Promise.resolve(null); }
+        try { engineWorker = new Worker('analysis-worker.js?v=41'); } catch (e) { return Promise.resolve(null); }
         engineWorker.onmessage = (e) => {
             const d = e.data;
             const done = engineWaiting.get(d.requestId);

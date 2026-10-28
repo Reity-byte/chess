@@ -1098,3 +1098,26 @@ body.app-shell { overflow: hidden; }
 .lesson-stars span { color: var(--surface-3); }
 .endgames-card .openings-icon { color: var(--text); }
 .endgames-page .session-count { font: 700 18px var(--font); }
+/* Achievements page */
+.ach-hero { padding: 22px 24px; }
+.ach-hero h1 { font-size: 28px; font-weight: 800; margin: 4px 0 12px; }
+.ach-hero .muted { font-size: 14px; margin-top: 10px; }
+.ach-total { height: 8px; border-radius: 8px; background: var(--surface-3); overflow: hidden; max-width: 520px; }
+.ach-total div { height: 100%; border-radius: 8px; background: var(--warning); transition: width .5s ease; }
+#achievementGroups { display: flex; flex-direction: column; gap: 22px; }
+.ach-group h2 { font-size: 18px; font-weight: 800; margin-bottom: 10px; }
+.ach-group h2 .muted { font: 600 13px var(--mono); margin-left: 6px; }
+.ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.ach-card { display: flex; gap: 12px; align-items: flex-start; padding: 14px; opacity: .72; }
+.ach-card.unlocked { opacity: 1; border-color: rgba(232, 184, 74, 0.4); }
+.ach-icon {
+    flex-shrink: 0; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
+    background: var(--surface-2); font-size: 22px; filter: grayscale(1);
+}
+.ach-card.unlocked .ach-icon { background: var(--warning-soft); filter: none; }
+.ach-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; font-size: 13px; color: var(--text-dim); line-height: 1.4; }
+.ach-body strong { font-size: 15px; color: var(--text); }
+.ach-date { font-size: 12px; font-weight: 700; color: var(--warning); }
+.ach-progress { height: 6px; margin-top: 4px; border-radius: 6px; background: var(--surface-3); overflow: hidden; }
+.ach-progress div { height: 100%; border-radius: 6px; background: var(--accent); }
+.ach-progress-text { font: 600 11px var(--mono); color: var(--text-faint); }

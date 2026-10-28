@@ -110,6 +110,7 @@
 .card-icon .piece-icon { width: 30px; height: 30px; }
 .card-icon.review { background: rgba(129, 182, 76, 0.16); color: var(--accent); }
 .card-icon.puzzle { background: rgba(232, 184, 74, 0.14); }
+.card-icon.train { background: rgba(98, 168, 255, 0.14); }
 .card h3 { font-size: 18px; font-weight: 750; }
 .card p { flex: 1; color: var(--text-dim); font-size: 14px; line-height: 1.55; }
 .card-cta { color: var(--accent); font-weight: 700; font-size: 14px; }

@@ -4,20 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chess — play, review, train</title>
-    <link rel="stylesheet" href="theme.css?v=39">
-    <link rel="stylesheet" href="pieces.css?v=39">
-    <script src="style-settings.js?v=39"></script>
+    <link rel="stylesheet" href="theme.css?v=41">
+    <link rel="stylesheet" href="pieces.css?v=41">
+    <script src="style-settings.js?v=41"></script>
     <link rel="manifest" href="manifest.webmanifest">
     <meta name="theme-color" content="#111317">
     <link rel="icon" type="image/png" href="icons/icon-192.png">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-    <script src="app.js?v=39" defer></script>
-    <link rel="stylesheet" href="site.css?v=39">
-    <script src="game/history-store.js?v=39" defer></script>
-    <script src="game/opening-repertoires.js?v=39" defer></script>
-    <script src="game/endgame-lessons.js?v=39" defer></script>
-    <script src="game/daily-plan.js?v=39" defer></script>
-    <script src="site-script.js?v=39" defer></script>
+    <script src="app.js?v=41" defer></script>
+    <link rel="stylesheet" href="site.css?v=41">
+    <script src="game/history-store.js?v=41" defer></script>
+    <script src="game/opening-repertoires.js?v=41" defer></script>
+    <script src="game/endgame-lessons.js?v=41" defer></script>
+    <script src="game/daily-plan.js?v=41" defer></script>
+    <script src="site-script.js?v=41" defer></script>
+    <script src="game/achievements.js?v=41" defer></script>
 </head>
 <body>
 
@@ -43,8 +44,9 @@
         <div class="hero-text">
             <span class="eyebrow hero-eyebrow">Play · Review · Train</span>
             <h1>Play chess against a real engine.<br><span class="accent">Then learn from every move.</span></h1>
-            <p class="hero-sub">Pick the engine's rating on a slider, beginner to full strength, then get a full game review —
-                brilliant moves, blunders, accuracy and the best lines — and turn your own mistakes into puzzles.</p>
+            <p class="hero-sub">Pick the engine's rating, beginner to full strength, then get a full game review —
+                brilliant moves, blunders, accuracy and the best lines. Train what went wrong with puzzles,
+                an opening trainer and an endgame trainer, a few minutes a day.</p>
             <div class="hero-buttons">
                 <button id="resumeGameButton" class="btn btn-primary btn-lg hidden">▶ Resume game</button>
                 <button id="startGameButton" class="btn btn-primary btn-lg">Play vs Engine</button>
@@ -72,20 +74,44 @@
             <a class="card" href="game/game.html?mode=human">
                 <span class="card-icon"><span class="piece-icon white king"></span></span>
                 <h3>Play the engine</h3>
-                <p>Choose the engine's rating, from beginner to full strength. Your own rating goes up as you beat it.</p>
+                <p>Choose the engine's rating, from beginner to full strength, and a time control. Your rating per mode goes up as you beat it.</p>
                 <span class="card-cta">Play now →</span>
             </a>
             <a class="card" href="game/analysis.html">
                 <span class="card-icon review">★</span>
                 <h3>Game Review</h3>
-                <p>Every move rated from Brilliant to Blunder, accuracy per side and phase, the best line, and an eval graph.</p>
+                <p>Every move rated from Brilliant to Blunder. Watch the board follow the review, replay the game, and see where you left your opening.</p>
                 <span class="card-cta">Review a game →</span>
             </a>
             <a class="card" href="game/puzzles.html">
                 <span class="card-icon puzzle">🧩</span>
-                <h3>Puzzle Trainer</h3>
-                <p>Punish real blunders. The pool grows from every game you review, with a rating that adapts to you.</p>
+                <h3>Puzzles</h3>
+                <p>500 engine-checked puzzles by theme, a daily puzzle, Puzzle Rush against the clock, and stats that show your weakest theme.</p>
                 <span class="card-cta">Solve puzzles →</span>
+            </a>
+            <a class="card" href="game/trainer.html">
+                <span class="card-icon train">🎯</span>
+                <h3>Train your mistakes</h3>
+                <p>Positions where you went wrong come back until you find the best move — plus Today's plan, a short routine for every day.</p>
+                <span class="card-cta">Start training →</span>
+            </a>
+            <a class="card" href="game/openings.html">
+                <span class="card-icon"><span class="piece-icon white knight"></span></span>
+                <h3>Opening trainer</h3>
+                <p>Learn the Italian, London, Caro-Kann or Queen's Gambit Declined line by line, with reviews spaced out until you know them by heart.</p>
+                <span class="card-cta">Learn openings →</span>
+            </a>
+            <a class="card" href="game/endgames.html">
+                <span class="card-icon"><span class="piece-icon black king"></span></span>
+                <h3>Endgame trainer</h3>
+                <p>Basic mates, the opposition, Lucena and Philidor — played against the full-strength engine, with pawn endings judged exactly.</p>
+                <span class="card-cta">Practise endgames →</span>
+            </a>
+            <a class="card" href="game/achievements.html">
+                <span class="card-icon puzzle">🏆</span>
+                <h3>Achievements</h3>
+                <p>Badges for your milestones: beating stronger engine levels, Rush scores, mastered openings, three-star endgames.</p>
+                <span class="card-cta">See badges →</span>
             </a>
             <a class="card" href="game/game.html?mode=ai">
                 <span class="card-icon"><span class="piece-icon black queen"></span></span>
@@ -137,6 +163,7 @@
             <li>Check, checkmate and stalemate</li>
             <li>Threefold repetition, 50-move rule, insufficient material</li>
             <li>PGN import and export</li>
+            <li>Installs as an app and works offline</li>
         </ul>
     </section>
 

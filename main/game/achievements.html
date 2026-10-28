@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Achievements · Chess</title>
+    <link rel="stylesheet" href="../theme.css?v=41">
+    <link rel="stylesheet" href="../pieces.css?v=41">
+    <script src="../style-settings.js?v=41"></script>
+    <link rel="manifest" href="../manifest.webmanifest">
+    <meta name="theme-color" content="#111317">
+    <link rel="icon" type="image/png" href="../icons/icon-192.png">
+    <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+    <script src="../app.js?v=41" defer></script>
+    <link rel="stylesheet" href="game.css?v=41">
+    <script src="opening-repertoires.js?v=41" defer></script>
+    <script src="endgame-lessons.js?v=41" defer></script>
+    <script src="achievements.js?v=41" defer></script>
+    <script src="achievements-page.js?v=41" defer></script>
+</head>
+<body>
+
+    <header class="topbar">
+        <a class="brand" href="../site.html">
+            <span class="brand-mark"><span class="piece-icon white knight"></span></span>
+            <span class="brand-name">Chess</span>
+        </a>
+        <nav class="topnav">
+            <a href="game.html">Play</a>
+            <a href="analysis.html">Review</a>
+            <a href="puzzles.html">Puzzles</a>
+            <a href="history.html">History</a>
+            <a href="trainer.html" class="active">Train</a>
+        </nav>
+        <div class="topbar-right">
+        </div>
+    </header>
+
+    <main class="trainer-page achievements-page">
+        <section class="panel ach-hero">
+            <a class="back-link" href="trainer.html">← Train</a>
+            <div class="eyebrow">Achievements</div>
+            <h1><span id="achCount">0 of 0</span> unlocked</h1>
+            <div class="ach-total"><div id="achFill"></div></div>
+            <p class="muted">Milestones across playing, puzzles, openings, endgames and daily training. Locked ones show how far along you are.</p>
+        </section>
+        <div id="achievementGroups"></div>
+    </main>
+
+</body>
+</html>

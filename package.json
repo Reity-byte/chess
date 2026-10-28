@@ -4,7 +4,8 @@
   "description": "Vanilla JS chess site — engine, game review and puzzle trainer. No dependencies; scripts are only for testing.",
   "scripts": {
     "start": "py -3 -m http.server 8933",
-    "test": "node tests/perft.js && node tests/analysis.js && node tests/puzzles.js && node tests/openings.js && node tests/endgames.js",
+    "test": "node tests/perft.js && node tests/analysis.js && node tests/puzzles.js && node tests/openings.js && node tests/endgames.js && node tests/achievements.js",
+    "test:achievements": "node tests/achievements.js",
     "test:endgames": "node tests/endgames.js",
     "endgame-tables": "node tools/endgame-tables.js",
     "test:openings": "node tests/openings.js",
