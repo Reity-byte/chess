@@ -52,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
     $('navPrev').addEventListener('click', stepBack);
     $('navNext').addEventListener('click', stepForward);
     $('navEnd').addEventListener('click', goToEnd);
+    $('navPlay').addEventListener('click', togglePlay);
     $('navFlip').addEventListener('click', flipBoard);
     $('backToGameButton').addEventListener('click', backToGame);
     $('exitPuzzleButton').addEventListener('click', () => selectPly(puzzle ? puzzle.ply : selectedPly));
@@ -78,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Escape' && !$('loadModal').classList.contains('hidden')) { closeLoadModal(); return; }
         if ((e.target.closest && e.target.closest('textarea, input')) || document.querySelector('.modal-overlay:not(.hidden)')) return;
         const keys = { ArrowLeft: stepBack, ArrowRight: stepForward, Home: () => goTo(-1), End: goToEnd,
-                       f: flipBoard, F: flipBoard, ' ': playEngineMove, Escape: leaveTrainingMode };
+                       f: flipBoard, F: flipBoard, ' ': playEngineMove, Escape: leaveTrainingMode, p: togglePlay, P: togglePlay };
         if (keys[e.key]) { e.preventDefault(); keys[e.key](); }
     });
 
@@ -211,6 +212,7 @@ function loadGame(data) {
     setTab('moves');
     updatePlayerStrips();
     buildMoveList();
+    renderRepertoireNote();
     selectPly(-1);
     startAnalysis();
 }
@@ -279,6 +281,7 @@ function startAnalysis() {
         analyzing = true;
         renderSummary();
         renderGraph();
+        if (!cursor) startFollow();
     }
 
     analysisJob = runReview(game.sanMoves, analysisMode, {
@@ -293,6 +296,7 @@ function startAnalysis() {
             renderGraph();
             renderCounts();
             if (entry.ply === selectedPly || (selectedPly === -1 && entry.ply === 0)) refreshSelection();
+            if (follow) scheduleFollow();
         },
         onFinalizing: () => { if (run === analysisRun) $('progressText').textContent = refining ? 'Refining… building the report' : 'Building the report…'; },
         onDone: (finished) => {
@@ -313,6 +317,7 @@ function startAnalysis() {
 }
 
 function analysisFailed(message) {
+    stopFollow();
     analyzing = false;
     refining = false;
     stopAnalysisJob();
@@ -321,6 +326,7 @@ function analysisFailed(message) {
 }
 
 function finishAnalysis(finished, fromCache) {
+    stopFollow();
     report = finished;
     entries = finished.perMove.slice();
     startEval = finished.startEval;
@@ -414,6 +420,95 @@ function flipBoard() {
     refreshEvalBar();
 }
 
+// ─── FOLLOW AND PLAY ───────────────────────────────────────────────────────────
+// Follow: while a fresh review runs, the board steps through the game as the
+// moves get rated (each with its badge), so there's something to watch. Moves
+// can be rated out of order (parallel workers): it waits for the next one and
+// catches up quicker when it's behind. Play (▶): the game move by move with
+// sound, from the shown move (or from the start at the end). Any navigation by
+// the user stops both.
+const FOLLOW_MS = 700;        // per move while following
+const FOLLOW_CATCHUP_MS = 280; // ...when 4+ rated moves are waiting
+const PLAY_MS = 1000;
+let follow = null;     // { timer, last }
+let playback = null;   // { timer }
+let autoStep = false;  // true while follow / play moves the board itself
+
+function autoSelect(ply) {
+    autoStep = true;
+    try { selectPly(ply); } finally { autoStep = false; }
+}
+
+function stopAuto() {
+    stopFollow();
+    stopPlayback();
+}
+
+function startFollow() {
+    stopAuto();
+    follow = { timer: null, last: 0 };
+    renderPlayButton();
+    scheduleFollow();
+}
+
+function stopFollow() {
+    if (!follow) return;
+    clearTimeout(follow.timer);
+    follow = null;
+    renderPlayButton();
+}
+
+function scheduleFollow() {
+    if (!follow || follow.timer) return;
+    const next = selectedPly + 1;
+    if (!game || next >= game.sanMoves.length) { stopFollow(); return; }
+    if (!entries[next]) return; // onMove calls back when it's rated
+    let ahead = 0;
+    while (entries[next + ahead]) ahead++;
+    const gap = ahead >= 4 ? FOLLOW_CATCHUP_MS : FOLLOW_MS;
+    follow.timer = setTimeout(() => {
+        if (!follow) return;
+        follow.timer = null;
+        follow.last = Date.now();
+        autoSelect(selectedPly + 1);
+        scheduleFollow();
+    }, Math.max(60, gap - (Date.now() - follow.last)));
+}
+
+function togglePlay() {
+    if (!game || retry || puzzle) return;
+    if (follow || playback) { stopAuto(); return; }
+    if (cursor) backToGame();
+    if (selectedPly >= game.sanMoves.length - 1) autoSelect(-1);
+    playback = { timer: null };
+    renderPlayButton();
+    const step = () => {
+        if (!playback) return;
+        if (selectedPly >= game.sanMoves.length - 1) { stopPlayback(); return; }
+        autoSelect(selectedPly + 1);
+        playSoundForMove(game.sanMoves[selectedPly]);
+        playback.timer = setTimeout(step, PLAY_MS);
+    };
+    playback.timer = setTimeout(step, selectedPly < 0 ? 400 : PLAY_MS / 2);
+}
+
+function stopPlayback() {
+    if (!playback) return;
+    clearTimeout(playback.timer);
+    playback = null;
+    renderPlayButton();
+}
+
+function renderPlayButton() {
+    const b = $('navPlay');
+    const running = !!(follow || playback);
+    b.textContent = running ? '⏸' : '▶ Play';
+    b.title = follow ? 'Stop following the review (P)' : running ? 'Pause (P)' : 'Play through the game (P)';
+    b.setAttribute('aria-label', running ? 'Pause' : 'Play through the game');
+    b.classList.toggle('playing', running);
+    b.disabled = !game || !!retry || !!puzzle;
+}
+
 function positionAt(ply) {
     resetGame();
     for (let i = 0; i <= ply; i++) applyMoveWithPromotion(game.moves[i].move, game.moves[i].promo);
@@ -451,6 +546,7 @@ function parentNode(n) {
 
 function goToNode(n) {
     if (isGameNode(n)) { selectPly(n.ply); return; }
+    stopAuto();
     clearPuzzle();
     clearRetry();
     cursor = { id: n.id, index: n.index };
@@ -464,6 +560,7 @@ function goToNode(n) {
 // Shows a real game position; leaves any variation, puzzle or retry.
 function selectPly(ply) {
     if (!game) return;
+    if (!autoStep) stopAuto();
     clearPuzzle();
     clearRetry();
     cursor = null;
@@ -512,6 +609,7 @@ function refreshSelection() {
     $('navNext').disabled = atEnd;
     $('navEnd').disabled = atEnd;
     renderWalkBar();
+    renderPlayButton();
     startLive(); // also redraws the arrows and the eval bar
 }
 
@@ -731,6 +829,62 @@ function highlightMoveCell() {
     if (top < scroller.scrollTop || top > scroller.scrollTop + scroller.clientHeight - 40) {
         scroller.scrollTop = top - scroller.clientHeight / 2;
     }
+}
+
+// ─── REPERTOIRE NOTE ───────────────────────────────────────────────────────────
+// Compares your side of the game with your Opening Trainer repertoires
+// (repertoireCheck in opening-repertoires.js): where you left the line, where
+// your opponent did, or that you played it to the end. Only for games where one
+// side is you.
+function renderRepertoireNote() {
+    const el = $('repertoireNote');
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    if (!game || typeof repertoireCheck !== 'function') return;
+    const color = isYou(game.white) && !isYou(game.black) ? 'white' : isYou(game.black) && !isYou(game.white) ? 'black' : null;
+    if (!color) return;
+    const r = repertoireCheck(game.sanMoves, color);
+    if (!r) return;
+    const move = (ply, san) => `${moveNumberPrefix(ply)}${san}`;
+    const list = (sans, ply) => sans.map(s => move(ply, s)).join(' or ');
+    let learned = false;
+    try { learned = !!(r.line && ((JSON.parse(localStorage.getItem('chessOpenings')) || {}).lines || {})[r.line.id]); } catch (e) { /* not learned */ }
+    let text;
+    if (!r.rep) {
+        text = r.kind === 'you'
+            ? `Your repertoires start with ${list(r.expected, 0)} — this game began ${move(0, r.played)}.`
+            : `Your repertoires answer ${list(r.expected, 0)} — not ${move(0, r.played)}.`;
+    } else if (r.kind === 'you') {
+        text = `<strong>${move(r.ply, escapeHTML(r.played))}</strong> left your ${escapeHTML(r.rep.name)} — it plays <strong>${list(r.expected.map(escapeHTML), r.ply)}</strong>`
+            + (learned ? ' (a line you’ve learned).' : '.');
+    } else if (r.kind === 'opponent') {
+        text = `Your ${escapeHTML(r.rep.name)} lasted ${Math.ceil(r.ply / 2)} move${r.ply > 2 ? 's' : ''}; `
+            + `<strong>${move(r.ply, escapeHTML(r.played))}</strong> isn't covered (it answers ${list(r.expected.map(escapeHTML), r.ply)}).`;
+    } else {
+        text = `✓ You played your ${escapeHTML(r.rep.name)} line <strong>${escapeHTML(r.line.name)}</strong> `
+            + (r.kind === 'end' ? 'to the end.' : '— the game stayed in it.');
+    }
+    const textEl = document.createElement('span');
+    textEl.className = 'repertoire-text';
+    textEl.innerHTML = `<span class="repertoire-icon">♞</span><span>${text}</span>`;
+    el.appendChild(textEl);
+    const link = (label, href, cls = '') => {
+        const a = document.createElement('a');
+        a.className = 'btn ' + cls;
+        a.href = href;
+        a.textContent = label;
+        el.appendChild(a);
+    };
+    if (r.rep && r.kind !== 'end' && r.kind !== 'inside') {
+        const b = document.createElement('button');
+        b.className = 'btn';
+        b.textContent = 'Show';
+        b.addEventListener('click', () => { setTab('moves'); goTo(r.ply); });
+        el.appendChild(b);
+    }
+    if (r.rep && r.kind === 'you') link('Drill line', `openings.html?rep=${r.rep.id}&line=${r.line.id}`, 'btn-primary');
+    else link('Openings', r.rep ? `openings.html?rep=${r.rep.id}` : 'openings.html');
+    el.classList.remove('hidden');
 }
 
 // ─── SUMMARY: ACCURACY, OPENING, COUNTS, PHASES ────────────────────────────────
@@ -1237,7 +1391,7 @@ function startLive() {
             const run = liveRun;
             liveTimer = setTimeout(() => {
                 if (run !== liveRun) return;
-                try { liveWorker = new Worker('analysis-worker.js?v=36'); } catch (e) { return; }
+                try { liveWorker = new Worker('analysis-worker.js?v=38'); } catch (e) { return; }
                 liveWorker.onmessage = (e) => {
                     const d = e.data;
                     if (run !== liveRun || d.type !== 'live') return;
@@ -1323,7 +1477,7 @@ const judgeWaiting = new Map();
 
 function judgeMove(sanMoves, san) {
     if (!judgeWorker) {
-        try { judgeWorker = new Worker('analysis-worker.js?v=36'); } catch (e) { return Promise.reject(e); }
+        try { judgeWorker = new Worker('analysis-worker.js?v=38'); } catch (e) { return Promise.reject(e); }
         judgeWorker.onmessage = (e) => {
             const d = e.data;
             const waiting = judgeWaiting.get(d.requestId);

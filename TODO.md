@@ -1095,6 +1095,22 @@ analysis depth is ~6–8 in Standard mode (raise `ANALYSIS_MODES` budgets if it 
 
 ---
 
+## ▶ Session 36 — Review: follow the review, Play, repertoire note
+
+- **Follow:** while a fresh review runs (not a cached or "refining" one), the board steps through the game
+  as the moves get rated, badge and caption included — 700 ms a move, 280 ms when 4+ rated moves are
+  waiting (parallel workers rate out of order, so it waits for the next one). It stops when the review
+  finishes or the user navigates anywhere (`selectPly` / `goToNode` call `stopAuto()` unless `autoStep`).
+- **▶ Play** (nav bar, key P): plays the game move by move with sound, 1 s a move, from the shown move (from
+  the start when at the end); ⏸ pauses, any navigation stops it. The same button pauses Follow.
+- **Repertoire note** (review header, games where one side is "You"): `repertoireCheck(sanMoves, color)` in
+  `opening-repertoires.js` finds the repertoire that follows the game longest and reports where it left:
+  you deviated (Show + **Drill line** → `openings.html?rep=…&line=…`, which now starts that line), the
+  opponent left the prep (what it covers), or the line was played to the end. Cases in `tests/openings.js`.
+- Cache version `?v=38`.
+
+---
+
 ## ♚ Session 35 — Endgame trainer
 
 - **Page:** `main/game/endgames.html` + `endgames-page.js` (nav shows Train; reached from the Train page's

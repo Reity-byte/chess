@@ -92,3 +92,45 @@ function parseOpeningLine(text) {
     }
     return out;
 }
+
+// How a game's opening compares with your repertoires for `color` (the review
+// page's repertoire note). Picks the repertoire whose lines follow the game the
+// longest and says where the game left it:
+//   kind 'you'      — you played something else at `ply`; `expected` = the repertoire move
+//   kind 'opponent' — the opponent's move at `ply` isn't covered; `expected` = the replies it covers
+//   kind 'end'      — you played a whole line (`line`) to its end
+//   kind 'inside'   — the game ended while still in the repertoire
+// `rep` is null (and `expected` lists every repertoire's first move) when the
+// game left all of them on move 1. Returns null for an empty game.
+function repertoireCheck(sanMoves, color) {
+    const bare = (s) => String(s).replace(/[+#!?]/g, '');
+    const game = sanMoves.map(bare);
+    if (!game.length) return null;
+    const userParity = color === 'white' ? 0 : 1;
+    let best = null;
+    for (const rep of OPENING_REPERTOIRES) {
+        if (rep.color !== color) continue;
+        const lines = rep.lines.map(line => ({ line, moves: parseOpeningLine(line.moves).map(m => bare(m.san)) }));
+        let n = 0;
+        for (const l of lines) {
+            let k = 0;
+            while (k < l.moves.length && k < game.length && l.moves[k] === game[k]) k++;
+            n = Math.max(n, k);
+        }
+        if (!best || n > best.n) best = { rep, lines, n };
+    }
+    if (!best) return null;
+    const { n } = best;
+    const kindAt = (ply) => (ply % 2 === userParity ? 'you' : 'opponent');
+    if (n === 0) {
+        const firsts = OPENING_REPERTOIRES.filter(r => r.color === color).map(r => parseOpeningLine(r.lines[0].moves)[0].san);
+        return { rep: null, ply: 0, kind: kindAt(0), played: sanMoves[0], expected: [...new Set(firsts)], line: null };
+    }
+    const matching = best.lines.filter(l => l.moves.slice(0, n).every((m, i) => m === game[i]));
+    const finished = matching.find(l => l.moves.length === n);
+    if (finished) return { rep: best.rep, ply: n - 1, kind: 'end', played: null, expected: [], line: finished.line };
+    if (n >= game.length) return { rep: best.rep, ply: n - 1, kind: 'inside', played: null, expected: [], line: matching[0].line };
+    const expected = [...new Set(matching.map(l => l.moves[n]))];
+    const line = matching.find(l => l.moves[n] === expected[0]).line;
+    return { rep: best.rep, ply: n, kind: kindAt(n), played: sanMoves[n], expected, line };
+}

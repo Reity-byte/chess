@@ -63,7 +63,7 @@ const engine = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=36');
+            this.worker = new Worker('ai-worker.js?v=38');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {

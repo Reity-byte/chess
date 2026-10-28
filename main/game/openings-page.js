@@ -77,6 +77,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     $('endDrill').addEventListener('click', endDrill);
     renderAll();
+    // ?line=<id> (from the review page's repertoire note): drill that line now.
+    const lineParam = new URLSearchParams(location.search).get('line');
+    const target = allLines().find(x => x.line.id === lineParam);
+    if (target) startDrill([{ ...target, mode: lineStatus(target.line) === 'new' ? 'learn' : 'quiz' }]);
 });
 
 function renderAll() {

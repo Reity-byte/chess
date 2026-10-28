@@ -52,4 +52,22 @@ for (const rep of reps) {
     t.check(losses.length === 0, `${rep.name}: no move of yours loses over ${MAX_LOSS} cp${losses.length ? ' — ' + losses.join('; ') : ''}`);
 }
 t.check(lineCount >= 20, `${lineCount} lines in ${reps.length} repertoires`);
+
+// repertoireCheck(): the review page's "where did the game leave my repertoire" note.
+const it1 = run(`parseOpeningLine(OPENING_REPERTOIRES[0].lines[0].moves).map(m => m.san)`);
+const cases = [
+    ['a whole line played', it1.concat(['h6']), 'white', { kind: 'end', rep: 'italian', line: 'it1' }],
+    ['you deviate', ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'], 'white', { kind: 'you', rep: 'italian', ply: 4, expected: 'Bc4', line: true }],
+    ['the opponent deviates', ['e4', 'c5', 'Nf3'], 'white', { kind: 'opponent', rep: 'italian', ply: 1 }],
+    ['no repertoire on move 1', ['c4', 'e5'], 'white', { kind: 'you', rep: null, ply: 0, expected: 'e4,d4' }],
+    ['the game ends inside', ['e4', 'c6', 'd4', 'd5'], 'black', { kind: 'inside', rep: 'caro' }],
+    ['black deviates on move 1', ['e4', 'e5'], 'black', { kind: 'you', rep: 'caro', ply: 1, expected: 'c6' }],
+    ['checks and annotations ignored', ['d4', 'd5', 'c4+', 'e6!'], 'black', { kind: 'inside', rep: 'qgd' }],
+];
+for (const [label, moves, color, want] of cases) {
+    const r = run(`(() => { const r = repertoireCheck(${JSON.stringify(moves)}, ${JSON.stringify(color)});
+        return r && { kind: r.kind, rep: r.rep && r.rep.id, ply: r.ply, expected: r.expected.join(','), line: r.line && r.line.id }; })()`);
+    const ok = r && Object.entries(want).every(([k, v]) => (v === true ? !!r[k] : r[k] === v));
+    t.check(ok, `repertoireCheck: ${label} (${JSON.stringify(r)})`);
+}
 t.done('openings');

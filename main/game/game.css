@@ -426,6 +426,14 @@ body.app-shell { overflow: hidden; }
 .header-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .header-row .opening-line { flex: 1; padding: 0; text-align: left; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .header-row .btn-icon { width: 34px; height: 30px; font-size: 18px; }
+.repertoire-note {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; padding: 8px 10px;
+    border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; color: var(--text-dim);
+}
+.repertoire-note strong { color: var(--text); }
+.repertoire-text { flex: 1 1 200px; display: flex; gap: 8px; align-items: baseline; min-width: 0; line-height: 1.4; }
+.repertoire-icon { color: var(--accent); font-size: 15px; }
+.repertoire-note .btn { height: 28px; padding: 0 10px; font-size: 12px; }
 .game-header .progress { padding: 8px 0 0; }
 
 .menu-wrap { position: relative; }
@@ -576,6 +584,8 @@ body.app-shell { overflow: hidden; }
 
 .review-nav { display: flex; gap: 6px; justify-content: center; }
 .review-nav .btn { flex: 1; max-width: 88px; }
+.review-nav #navPlay { flex: 1.5; max-width: 120px; font-size: 14px; font-weight: 700; }
+.review-nav #navPlay.playing { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); font-size: 16px; }
 
 .caption-card { padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start; min-height: 74px; }
 .caption-icon {
