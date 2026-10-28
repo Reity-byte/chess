@@ -1076,3 +1076,15 @@ body.app-shell { overflow: hidden; }
     .rush-clock { font-size: 28px; }
     .rush-final strong { font-size: 44px; }
 }
+/* Endgame trainer */
+#chapters { display: flex; flex-direction: column; gap: 22px; }
+.endgame-chapter .panel-header { display: flex; align-items: center; }
+.chapter-stars { margin-left: auto; font: 700 13px var(--mono); color: var(--warning); }
+.chapter-blurb { margin: 0; padding: 0 16px 6px; font-size: 13px; }
+.endgame-chapter .practice-list { padding: 4px 6px 8px; }
+.endgame-chapter .practice-main { flex: 1; }
+.endgame-chapter .practice-main strong { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font); }
+.lesson-stars { flex-shrink: 0; font-size: 15px; letter-spacing: 1px; color: var(--warning); }
+.lesson-stars span { color: var(--surface-3); }
+.endgames-card .openings-icon { color: var(--text); }
+.endgames-page .session-count { font: 700 18px var(--font); }

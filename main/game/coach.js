@@ -20,7 +20,7 @@ let hint = null;         // { ply, step: 0|1|2, data, pending } for the position
 
 function askCoach(message) {
     if (!coachWorker) {
-        try { coachWorker = new Worker('analysis-worker.js?v=32'); } catch (e) { return Promise.resolve(null); }
+        try { coachWorker = new Worker('analysis-worker.js?v=36'); } catch (e) { return Promise.resolve(null); }
         coachWorker.onmessage = (e) => {
             const d = e.data;
             const waiting = coachWaiting.get(d.requestId);

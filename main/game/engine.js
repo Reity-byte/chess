@@ -65,6 +65,48 @@ function resetGame() {
     kingPos.black.x = 4; kingPos.black.y = 0;
 }
 
+// Sets up the position from a FEN string (the endgame trainer's start
+// positions). Castling rights become hasMoved flags, an en-passant square a
+// matching lastMove. Returns false on a malformed FEN (the board is left as is).
+const FEN_TYPES = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
+function loadFEN(fen) {
+    const [placement, side = 'w', castling = '-', ep = '-', half = '0'] = String(fen).trim().split(/\s+/);
+    const rows = (placement || '').split('/');
+    if (rows.length !== 8) return false;
+    const board = [];
+    for (const row of rows) {
+        const out = [];
+        for (const ch of row) {
+            if (/[1-8]/.test(ch)) { for (let i = 0; i < +ch; i++) out.push(null); continue; }
+            const type = FEN_TYPES[ch.toLowerCase()];
+            if (!type) return false;
+            const piece = new ChessPiece(type, ch === ch.toUpperCase() ? 'white' : 'black');
+            piece.hasMoved = type === 'king' || type === 'rook';
+            out.push(piece);
+        }
+        if (out.length !== 8) return false;
+        board.push(out);
+    }
+    resetGame();
+    gameState = board;
+    currentTurn = side === 'b' ? 'black' : 'white';
+    halfMoveClock = parseInt(half, 10) || 0;
+    const unmove = (x, y, type) => { const p = board[y][x]; if (p && p.type === type) p.hasMoved = false; };
+    for (const [ch, rx, y] of [['K', 7, 7], ['Q', 0, 7], ['k', 7, 0], ['q', 0, 0]]) {
+        if (!castling.includes(ch)) continue;
+        unmove(4, y, 'king'); unmove(rx, y, 'rook');
+    }
+    if (/^[a-h][36]$/.test(ep)) {
+        const x = ep.charCodeAt(0) - 97, toY = ep[1] === '6' ? 3 : 4, fromY = ep[1] === '6' ? 1 : 6;
+        if (board[toY][x] && board[toY][x].type === 'pawn') lastMove = { piece: board[toY][x], fromX: x, fromY, toX: x, toY };
+    }
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+        const p = board[y][x];
+        if (p && p.type === 'king') { kingPos[p.color].x = x; kingPos[p.color].y = y; }
+    }
+    return true;
+}
+
 // ─── ZOBRIST HASHING ────────────────────────────────────────────────────────────
 // Positions are identified by a 53-bit Zobrist hash (two 32-bit halves) instead
 // of a 64-character string. It encodes exactly what the old string key did:

@@ -4,25 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trainer · Chess</title>
-    <link rel="stylesheet" href="../theme.css?v=32">
-    <link rel="stylesheet" href="../pieces.css?v=32">
-    <script src="../style-settings.js?v=32"></script>
+    <link rel="stylesheet" href="../theme.css?v=36">
+    <link rel="stylesheet" href="../pieces.css?v=36">
+    <script src="../style-settings.js?v=36"></script>
     <link rel="manifest" href="../manifest.webmanifest">
     <meta name="theme-color" content="#111317">
     <link rel="icon" type="image/png" href="../icons/icon-192.png">
     <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
-    <script src="../app.js?v=32" defer></script>
-    <link rel="stylesheet" href="game.css?v=32">
-    <script src="engine.js?v=32" defer></script>
-    <script src="notation.js?v=32" defer></script>
-    <script src="analysis.js?v=32" defer></script>
-    <script src="strength.js?v=32" defer></script>
-    <script src="sound.js?v=32" defer></script>
-    <script src="board-ui.js?v=32" defer></script>
-    <script src="history-store.js?v=32" defer></script>
-    <script src="ratings.js?v=32" defer></script>
-    <script src="opening-repertoires.js?v=32" defer></script>
-    <script src="trainer-page.js?v=32" defer></script>
+    <script src="../app.js?v=36" defer></script>
+    <link rel="stylesheet" href="game.css?v=36">
+    <script src="engine.js?v=36" defer></script>
+    <script src="notation.js?v=36" defer></script>
+    <script src="analysis.js?v=36" defer></script>
+    <script src="strength.js?v=36" defer></script>
+    <script src="sound.js?v=36" defer></script>
+    <script src="board-ui.js?v=36" defer></script>
+    <script src="history-store.js?v=36" defer></script>
+    <script src="ratings.js?v=36" defer></script>
+    <script src="opening-repertoires.js?v=36" defer></script>
+    <script src="endgame-lessons.js?v=36" defer></script>
+    <script src="trainer-page.js?v=36" defer></script>
 </head>
 <body>
 
@@ -104,6 +105,11 @@
                 <a class="panel openings-card" href="openings.html" id="openingsCard">
                     <span class="openings-icon">♞</span>
                     <span class="openings-text"><strong>Opening trainer</strong><span class="muted" id="openingsCardSub">Learn a repertoire line by line.</span></span>
+                    <span class="btn">Open</span>
+                </a>
+                <a class="panel openings-card endgames-card" href="endgames.html" id="endgamesCard">
+                    <span class="openings-icon">♚</span>
+                    <span class="openings-text"><strong>Endgame trainer</strong><span class="muted" id="endgamesCardSub">Mates, opposition, Lucena and Philidor.</span></span>
                     <span class="btn">Open</span>
                 </a>
                 <div class="panel">

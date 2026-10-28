@@ -106,7 +106,7 @@ const engineClient = {
     ensure() {
         if (this.worker || this.broken) return;
         try {
-            this.worker = new Worker('ai-worker.js?v=32');
+            this.worker = new Worker('ai-worker.js?v=36');
             this.worker.onmessage = (e) => this.onMessage(e.data);
             this.worker.onerror = (e) => { e.preventDefault(); this.fail(); };
         } catch (e) {

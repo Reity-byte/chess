@@ -152,6 +152,7 @@ function render() {
     renderNextGame(games);
     renderUnreviewed(games);
     renderOpeningsCard();
+    renderEndgamesCard();
 }
 
 // The Opening Trainer's progress (openings.html, chessOpenings).
@@ -164,6 +165,17 @@ function renderOpeningsCard() {
     const due = all.filter(l => lines[l.id] && lines[l.id].box < 5 && lines[l.id].due <= today()).length;
     $('openingsCardSub').textContent = !learned ? `${OPENING_REPERTOIRES.length} repertoires, ${all.length} lines to learn.`
         : `${learned} of ${all.length} lines learned${due ? ` · ${due} due today` : ''}`;
+}
+
+function renderEndgamesCard() {
+    if (typeof ENDGAME_LESSONS === 'undefined') return;
+    let lessons = {};
+    try { lessons = (JSON.parse(localStorage.getItem('chessEndgames')) || {}).lessons || {}; } catch (e) { lessons = {}; }
+    const stars = (l) => (lessons[l.id] && lessons[l.id].stars) || 0;
+    const done = ENDGAME_LESSONS.filter(l => stars(l) > 0).length;
+    const total = ENDGAME_LESSONS.reduce((n, l) => n + stars(l), 0);
+    $('endgamesCardSub').textContent = !done ? `${ENDGAME_LESSONS.length} lessons: mates, opposition, Lucena and Philidor.`
+        : `${done} of ${ENDGAME_LESSONS.length} lessons done · ★ ${total}/${ENDGAME_LESSONS.length * 3}`;
 }
 
 function renderHero(games) {
@@ -228,7 +240,8 @@ function renderFocus(reviewed) {
         const [weak, weakV] = known[0];
         cards.push({ title: `Your ${PHASE_INFO[weak].label.toLowerCase()}`,
             stat: `${Math.round(weakV)}% accuracy there, against ${Math.round(known[known.length - 1][1])}% in your best phase`,
-            tip: PHASE_INFO[weak].tip, action: null });
+            tip: PHASE_INFO[weak].tip,
+            action: weak === 'endgame' ? { label: '♚ Endgame trainer', run: () => { location.href = 'endgames.html'; } } : null });
     }
     const blunders = avg(reviewed.map(g => (myReview(g) && myReview(g).counts && myReview(g).counts.Blunder) || 0));
     if (blunders !== null && blunders >= 1) {
@@ -375,7 +388,7 @@ const engineWaiting = new Map();
 
 function askEngine(message) {
     if (!engineWorker) {
-        try { engineWorker = new Worker('analysis-worker.js?v=32'); } catch (e) { return Promise.resolve(null); }
+        try { engineWorker = new Worker('analysis-worker.js?v=36'); } catch (e) { return Promise.resolve(null); }
         engineWorker.onmessage = (e) => {
             const d = e.data;
             const done = engineWaiting.get(d.requestId);

@@ -69,6 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
         legalMoves: (x, y) => getvalidMoves(x, y),
         onMove: onDrillMove,
     });
+    drillBoard.setInteractive(true);
     $('reviewAll').addEventListener('click', () => {
         if (dueLines(null).length) { startDrill(reviewQueue(null)); return; }
         const rep = repById(selected), next = rep.lines.find(l => lineStatus(l) === 'new');

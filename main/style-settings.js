@@ -223,7 +223,7 @@ function openStylePanel() {
 function openTransfer(action) {
     if (typeof openTransferPanel === 'function') { openTransferPanel(action); return; }
     const script = document.createElement('script');
-    script.src = new URL('transfer.js?v=32', STYLE_BASE).href;
+    script.src = new URL('transfer.js?v=36', STYLE_BASE).href;
     script.onload = () => openTransferPanel(action);
     document.head.appendChild(script);
 }

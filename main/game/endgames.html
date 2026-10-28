@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Endgames · Chess</title>
+    <link rel="stylesheet" href="../theme.css?v=36">
+    <link rel="stylesheet" href="../pieces.css?v=36">
+    <script src="../style-settings.js?v=36"></script>
+    <link rel="manifest" href="../manifest.webmanifest">
+    <meta name="theme-color" content="#111317">
+    <link rel="icon" type="image/png" href="../icons/icon-192.png">
+    <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+    <script src="../app.js?v=36" defer></script>
+    <link rel="stylesheet" href="game.css?v=36">
+    <script src="engine.js?v=36" defer></script>
+    <script src="ai.js?v=36" defer></script>
+    <script src="notation.js?v=36" defer></script>
+    <script src="sound.js?v=36" defer></script>
+    <script src="board-ui.js?v=36" defer></script>
+    <script src="endgame-tables.js?v=36" defer></script>
+    <script src="endgame-lessons.js?v=36" defer></script>
+    <script src="endgames-page.js?v=36" defer></script>
+</head>
+<body>
+
+    <header class="topbar">
+        <a class="brand" href="../site.html">
+            <span class="brand-mark"><span class="piece-icon white knight"></span></span>
+            <span class="brand-name">Chess</span>
+        </a>
+        <nav class="topnav">
+            <a href="game.html">Play</a>
+            <a href="analysis.html">Review</a>
+            <a href="puzzles.html">Puzzles</a>
+            <a href="history.html">History</a>
+            <a href="trainer.html" class="active">Train</a>
+        </nav>
+        <div class="topbar-right">
+        </div>
+    </header>
+
+    <main class="trainer-page endgames-page">
+        <!-- ── HERO ───────────────────────────────────────────────────────── -->
+        <section class="panel train-hero" id="endgamesHero">
+            <div class="train-hero-main">
+                <a class="back-link" href="trainer.html">← Train</a>
+                <div class="eyebrow">Endgame trainer</div>
+                <h1>Win the won endgames</h1>
+                <p class="muted" id="heroSub">Play the key endgame positions against the engine until the technique is automatic.</p>
+                <button class="btn btn-primary btn-lg" id="continueButton">▶ Start</button>
+            </div>
+            <div class="train-stats">
+                <div class="train-stat"><strong id="statDone">0</strong><span>Lessons done</span></div>
+                <div class="train-stat"><strong id="statStars">0</strong><span>Stars</span></div>
+                <div class="train-stat"><strong id="statPerfect">0</strong><span>Three-star</span></div>
+                <div class="train-stat"><strong id="statTotal">0</strong><span>Lessons in all</span></div>
+            </div>
+        </section>
+
+        <!-- ── LESSON (inline board) ──────────────────────────────────────── -->
+        <section class="panel train-session hidden" id="lesson">
+            <div class="session-head">
+                <div>
+                    <div class="eyebrow" id="lessonChapter">Endgame</div>
+                    <div class="session-count" id="lessonTitle">Lesson</div>
+                </div>
+                <div class="session-streak" id="lessonGoal"></div>
+                <button class="btn btn-ghost btn-icon" id="endLesson" title="Close lesson" aria-label="Close lesson">✕</button>
+            </div>
+            <div class="session-body">
+                <div class="session-board-wrap">
+                    <div id="endgameBoard"></div>
+                </div>
+                <div class="session-side">
+                    <div class="session-task" id="lessonTask"></div>
+                    <div class="line-moves" id="lessonMoves"></div>
+                    <div class="session-feedback hidden" id="lessonFeedback"></div>
+                    <div class="session-actions" id="lessonActions"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── CHAPTERS ───────────────────────────────────────────────────── -->
+        <div id="chapters"></div>
+    </main>
+
+</body>
+</html>

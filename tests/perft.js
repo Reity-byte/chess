@@ -84,6 +84,12 @@ for (const [name, fen, expected] of SUITES) {
     t0 = Date.now();
     const g = run(`__gamePerft(${gameDepth})`);
     t.check(g === expected[gameDepth - 1], `${name}: real board perft(${gameDepth}) = ${g} (expected ${expected[gameDepth - 1]}, ${Date.now() - t0} ms)`);
+
+    // engine.js's own loadFEN (the endgame trainer's) sets up the same position.
+    const key = run(`__loadFEN(${JSON.stringify(fen)}); getBoardKey()`);
+    const same = run(`loadFEN(${JSON.stringify(fen)}) && getBoardKey() === ${key}`);
+    const g2 = run(`__gamePerft(${Math.min(gameDepth, 3)})`);
+    t.check(same && g2 === expected[Math.min(gameDepth, 3) - 1], `${name}: loadFEN() gives the same position and perft`);
 }
 t.check(run('__hashErrors') === 0, `incremental hash matched a full recomputation at every node (${run('__hashErrors')} mismatches)`);
 t.done('perft');

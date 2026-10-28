@@ -4,12 +4,12 @@
 // game from its SAN move list: when a request extends the moves it already
 // knows, only the new moves are played; anything else (new game, takeback)
 // triggers a full replay. Its transposition table survives between moves.
-importScripts('engine.js?v=32', 'ai.js?v=32', 'notation.js?v=32');
+importScripts('engine.js?v=36', 'ai.js?v=36', 'notation.js?v=36');
 
 let knownSAN = [];
 
 function syncTo(sanMoves) {
-    const extends_ = sanMoves.length >= knownSAN.length && knownSAN.every((s, i) => s === sanMoves[i]);
+    const extends_ = knownSAN && sanMoves.length >= knownSAN.length && knownSAN.every((s, i) => s === sanMoves[i]);
     if (!extends_) {
         replaySANFromStart(sanMoves);
     } else {
@@ -34,6 +34,24 @@ self.onmessage = (e) => {
             resetGame();
             recordPosition();
             knownSAN = [];
+        } else if (d.type === 'search') {
+            // A set-up position (endgame trainer): FEN + the moves since, no book.
+            loadFEN(d.fen);
+            recordPosition();
+            for (const san of d.sanMoves) {
+                const r = resolveSAN(currentTurn, san);
+                if (!r) break;
+                applyMoveWithPromotion(r.move, r.promo);
+                recordPosition();
+            }
+            knownSAN = null; // the next 'think' replays from the start
+            const r = searchRoot(currentTurn, { timeMs: d.timeMs, maxDepth: d.maxDepth, contempt: d.contempt });
+            const m = r.move;
+            self.postMessage({
+                type: 'move', id: d.id, score: r.score,
+                move: m ? { fromX: m.fromX, fromY: m.fromY, toX: m.toX, toY: m.toY, details: m.details } : null,
+                promo: r.promo,
+            });
         } else if (d.type === 'think') {
             syncTo(d.sanMoves);
             const r = findBestMove(currentTurn, d.level, d.sanMoves);
